@@ -215,6 +215,14 @@ class AppleMusicPlayer(
         controller.play()
     }
 
+    fun skipToNextItem() {
+        controller.skipToNextItem()
+    }
+
+    fun skipToPreviousItem() {
+        controller.skipToPreviousItem()
+    }
+
     fun stop() {
         controller.stop()
     }

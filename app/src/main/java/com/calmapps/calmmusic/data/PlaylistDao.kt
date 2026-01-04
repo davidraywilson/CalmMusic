@@ -37,6 +37,15 @@ interface PlaylistDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPlaylist(playlist: PlaylistEntity)
 
+    /**
+     * Update the editable metadata for an existing playlist without triggering
+     * ON DELETE CASCADE on playlist_tracks. Using REPLACE for updates would
+     * delete and reinsert the PlaylistEntity row, which in turn would cascade
+     * and wipe all playlist_tracks rows for that playlist.
+     */
+    @Query("UPDATE playlists SET name = :name, description = :description WHERE id = :id")
+    suspend fun updatePlaylistMetadata(id: String, name: String, description: String?)
+
     @Delete
     suspend fun deletePlaylist(playlist: PlaylistEntity)
 
@@ -45,6 +54,20 @@ interface PlaylistDao {
 
     @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId")
     suspend fun deleteTracksForPlaylist(playlistId: String)
+
+    /**
+     * Delete specific songs from a playlist without affecting the playlist
+     * itself or other playlists that may reference the same songs.
+     */
+    @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId AND songId IN (:songIds)")
+    suspend fun deleteTracksForPlaylistAndSongIds(playlistId: String, songIds: List<String>)
+
+    /**
+     * Update the explicit position of a single song within a playlist. This is
+     * used when the user reorders songs in a playlist details editing mode.
+     */
+    @Query("UPDATE playlist_tracks SET position = :position WHERE playlistId = :playlistId AND songId = :songId")
+    suspend fun updateTrackPosition(playlistId: String, songId: String, position: Int)
 
     /**
      * Fetch all songs for a playlist, ordered by playlist position.
