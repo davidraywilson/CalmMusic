@@ -1,0 +1,120 @@
+package com.calmapps.calmmusic
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.annotation.OptIn
+import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.DefaultMediaNotificationProvider
+import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSessionService
+
+/**
+ * Media3-based playback service for local music files.
+ *
+ * This mirrors the CalmCast PlaybackService pattern so that local playback
+ * integrates with the system media session, notification, and hardware
+ * controls (volume keys, lockscreen, etc.).
+ */
+class PlaybackService : MediaSessionService() {
+    private var mediaSession: MediaSession? = null
+
+    companion object {
+        private const val NOTIFICATION_ID = 1001
+        private const val CHANNEL_ID = "calmmusic_playback_channel"
+
+        private var errorCallback: ((PlaybackException) -> Unit)? = null
+
+        fun setErrorCallback(callback: ((PlaybackException) -> Unit)?) {
+            errorCallback = callback
+        }
+    }
+
+    @OptIn(UnstableApi::class)
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+
+        val player = ExoPlayer.Builder(this).build()
+
+        // Configure audio attributes for music content
+        val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
+            .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+            .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
+        // Let ExoPlayer manage audio focus
+        player.setAudioAttributes(audioAttributes, true)
+
+        // Pause automatically if headphones are unplugged
+        player.setHandleAudioBecomingNoisy(true)
+
+        player.addListener(object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                errorCallback?.invoke(error)
+                super.onPlayerError(error)
+            }
+        })
+
+        // PendingIntent so tapping the notification opens CalmMusic MainActivity
+        val sessionActivityIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val sessionActivityPendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            sessionActivityIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        mediaSession = MediaSession.Builder(this, player)
+            .setSessionActivity(sessionActivityPendingIntent)
+            .build()
+
+        val notificationProvider = DefaultMediaNotificationProvider.Builder(this)
+            .setChannelId(CHANNEL_ID)
+            .setNotificationId(NOTIFICATION_ID)
+            .build()
+
+        setMediaNotificationProvider(notificationProvider)
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "CalmMusic playback"
+            val descriptionText = "Music playback controls"
+            val importance = NotificationManager.IMPORTANCE_LOW
+            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+                description = descriptionText
+            }
+            val notificationManager: NotificationManager =
+                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        mediaSession?.player?.let { player ->
+            if (!player.playWhenReady || player.mediaItemCount == 0) {
+                stopSelf()
+            }
+        }
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
+        mediaSession
+
+    override fun onDestroy() {
+        mediaSession?.run {
+            player.release()
+            release()
+        }
+        mediaSession = null
+        super.onDestroy()
+    }
+}

@@ -1,0 +1,4 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- MMD provides composable theme; this is a minimal placeholder. -->
+    <style name="Theme.CalmMusic" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

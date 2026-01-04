@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">CalmMusic</string>
+    <string name="playlists">Playlists</string>
+    <string name="songs">Songs</string>
+</resources>
