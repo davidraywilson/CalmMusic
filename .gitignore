@@ -5,9 +5,7 @@
 
 # Local configuration
 local.properties
-.idea/workspace.xml
-.idea/shelf/
-.idea/httpRequests/
+.idea/
 
 # Gradle
 .gradle/
@@ -15,12 +13,6 @@ local.properties
 
 # Android Studio / IntelliJ project files
 *.iml
-.idea/caches/
-.idea/libraries/
-.idea/modules.xml
-.idea/assetWizardSettings.xml
-.idea/navEditor.xml
-.idea/inspectionProfiles/
 
 # Logs and OS-specific files
 *.log
@@ -36,7 +28,6 @@ outputs/
 *.keystore
 
 # Misc
-.gradle/
 /local.properties
 *.tmp
 *.swp
