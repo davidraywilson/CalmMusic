@@ -6,6 +6,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Index
 
 /**
  * Unified song representation used for both Apple Music and local files.
@@ -14,7 +15,14 @@ import androidx.room.Query
  * between APPLE_MUSIC and LOCAL_FILE, and [audioUri] points to the underlying
  * resource (Apple catalog/library id or a content/file URI).
  */
-@Entity(tableName = "songs")
+@Entity(
+    tableName = "songs",
+    indices = [
+        Index("sourceType"),
+        Index("albumId"),
+        Index("artistId"),
+    ],
+)
 data class SongEntity(
     @PrimaryKey val id: String,
     val title: String,
@@ -30,7 +38,12 @@ data class SongEntity(
     val artistId: String? = null,
 )
 
-@Entity(tableName = "albums")
+@Entity(
+    tableName = "albums",
+    indices = [
+        Index("artistId"),
+    ],
+)
 data class AlbumEntity(
     @PrimaryKey val id: String,
     val name: String,

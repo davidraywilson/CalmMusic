@@ -16,6 +16,10 @@ import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -23,6 +27,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mudita.mmd.components.checkbox.CheckboxMMD
 import com.mudita.mmd.components.text.TextMMD
 
 @Composable
@@ -181,22 +186,45 @@ fun PlaylistItem(
 fun SelectablePlaylistItem(
     playlist: PlaylistUiModel,
     isSelected: Boolean,
-    onToggleSelected: () -> Unit,
+    onSelectionChange: (Boolean) -> Unit,
     showDivider: Boolean,
 ) {
+    // Row-local selection state so checkbox can update immediately, then we
+    // propagate the new value upward. Parent-driven resets (e.g., leaving
+    // edit mode) will update isSelected, and we treat that as the new source
+    // of truth on the next recomposition.
+    var localSelected by remember(playlist.id) { mutableStateOf(isSelected) }
+
+    // If parent clears selection (isSelected == false) while we still think we're
+    // selected, trust the parent and update local state. This keeps things
+    // consistent when edit mode is exited or external actions reset selection.
+    if (!isSelected && localSelected) {
+        localSelected = false
+    }
+
+    val toggle: () -> Unit = {
+        val newValue = !localSelected
+        localSelected = newValue
+        onSelectionChange(newValue)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onToggleSelected)
+            .clickable(onClick = toggle)
             .padding(bottom = 8.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Checkbox(
-                checked = isSelected,
-                onCheckedChange = { onToggleSelected() },
+            CheckboxMMD(
+                checked = localSelected,
+                onCheckedChange = { checked ->
+                    localSelected = checked
+                    onSelectionChange(checked)
+                },
+                modifier = Modifier.padding(0.dp),
             )
 
             Column(

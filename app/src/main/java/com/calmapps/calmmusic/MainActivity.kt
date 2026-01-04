@@ -8,7 +8,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,11 +18,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
 import androidx.compose.material.icons.outlined.LibraryMusic
-import androidx.compose.material.icons.outlined.QueueMusic
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.MoreHoriz
@@ -38,8 +34,6 @@ import androidx.compose.material3.Text
 import com.mudita.mmd.components.snackbar.SnackbarDurationMMD
 import com.mudita.mmd.components.snackbar.SnackbarHostMMD
 import com.mudita.mmd.components.snackbar.SnackbarHostStateMMD
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -48,6 +42,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -64,9 +61,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.QueueMusic
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.MaterialTheme
 import androidx.navigation.NavDestination
@@ -111,6 +109,8 @@ import com.mudita.mmd.components.nav_bar.NavigationBarMMD
 import com.mudita.mmd.components.search_bar.SearchBarDefaultsMMD
 import com.mudita.mmd.components.text.TextMMD
 import com.mudita.mmd.components.top_app_bar.TopAppBarMMD
+import kotlinx.coroutines.FlowPreview
+import androidx.core.net.toUri
 
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     object Playlists : Screen("playlists", "Playlists", Icons.Outlined.LibraryMusic)
@@ -118,7 +118,7 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     object PlaylistAddSongs : Screen("playlistAddSongs", "Add Songs", Icons.Outlined.LibraryMusic)
     object PlaylistEdit : Screen("playlistEdit", "Playlist", Icons.Outlined.LibraryMusic)
     object Artists : Screen("artists", "Artists", Icons.Outlined.PersonOutline)
-    object Songs : Screen("songs", "Songs", Icons.Outlined.QueueMusic)
+    object Songs : Screen("songs", "Songs", Icons.AutoMirrored.Outlined.QueueMusic)
     object Albums : Screen("albums", "Albums", Icons.Outlined.Album)
     object AlbumDetails : Screen("albumDetails", "Album", Icons.Outlined.Album)
     object ArtistDetails : Screen("artistDetails", "Artist", Icons.Outlined.LibraryMusic)
@@ -149,6 +149,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @Deprecated("This method has been deprecated in favor of using the Activity Result API\n      which brings increased type safety via an {@link ActivityResultContract} and the prebuilt\n      contracts for common intents available in\n      {@link androidx.activity.result.contract.ActivityResultContracts}, provides hooks for\n      testing, and allow receiving results in separate, testable classes independent from your\n      activity. Use\n      {@link #registerForActivityResult(ActivityResultContract, ActivityResultCallback)}\n      with the appropriate {@link ActivityResultContract} and handling the result in the\n      {@link ActivityResultCallback#onActivityResult(Object) callback}.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
@@ -163,7 +164,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
 @Composable
 fun CalmMusic(app: CalmMusic) {
     val navController = rememberNavController()
@@ -219,7 +220,8 @@ fun CalmMusic(app: CalmMusic) {
     var playlistSongsError by remember { mutableStateOf<String?>(null) }
     var playlistAddSongsSelection by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isPlaylistsEditMode by remember { mutableStateOf(false) }
-    var playlistsEditSelection by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val playlistEditSelectionIds = remember { mutableSetOf<String>() }
+    var playlistEditSelectionCount by remember { mutableStateOf(0) }
 
     var selectedArtist by remember { mutableStateOf<String?>(null) }
     var artistSongs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
@@ -227,10 +229,8 @@ fun CalmMusic(app: CalmMusic) {
     var isLoadingArtist by remember { mutableStateOf(false) }
     var artistError by remember { mutableStateOf<String?>(null) }
 
-    // Simple in-memory playback queue shared across screens.
     var playbackQueue by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
     var playbackQueueIndex by remember { mutableStateOf<Int?>(null) }
-    // Original, unshuffled queue used to restore ordering when shuffle is toggled off.
     var originalPlaybackQueue by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
 
     var repeatMode by remember { mutableStateOf(RepeatMode.OFF) }
@@ -244,7 +244,6 @@ fun CalmMusic(app: CalmMusic) {
     var showNowPlaying by remember { mutableStateOf(false) }
     var showAddToPlaylistDialog by remember { mutableStateOf(false) }
     var pendingAddToNewPlaylistSong by remember { mutableStateOf<SongUiModel?>(null) }
-    var showDeletePlaylistsSheet by remember { mutableStateOf(false) }
 
     var searchQuery by remember { mutableStateOf("") }
     var searchSongs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
@@ -492,7 +491,7 @@ fun CalmMusic(app: CalmMusic) {
             // Build an Apple Music playback queue in the same order as our in-memory queue,
             // but containing only Apple Music items, and start from the tapped song.
             val appleSongs = queue.filter { it.sourceType == "APPLE_MUSIC" }
-            val appleIds = appleSongs.mapNotNull { it.audioUri ?: it.id }
+            val appleIds = appleSongs.map { it.audioUri ?: it.id }
             val appleIndex = appleSongs.indexOfFirst { it.id == song.id }
             if (appleIds.isNotEmpty() && appleIndex >= 0) {
                 app.appleMusicPlayer.playQueueOfSongs(appleIds, appleIndex)
@@ -599,7 +598,7 @@ fun CalmMusic(app: CalmMusic) {
             // starting from the current song.
             if (current.sourceType == "APPLE_MUSIC") {
                 val appleSongs = newQueue.filter { it.sourceType == "APPLE_MUSIC" }
-                val appleIds = appleSongs.mapNotNull { it.audioUri ?: it.id }
+                val appleIds = appleSongs.map { it.audioUri ?: it.id }
                 val appleIndex = appleSongs.indexOfFirst { it.id == current.id }.takeIf { it >= 0 } ?: 0
                 if (appleIds.isNotEmpty()) {
                     app.appleMusicPlayer.playQueueOfSongs(appleIds, appleIndex)
@@ -649,7 +648,7 @@ fun CalmMusic(app: CalmMusic) {
             // Rebuild the underlying player queue to match the restored ordering.
             if (restoredCurrent.sourceType == "APPLE_MUSIC") {
                 val appleSongs = restoreQueue.filter { it.sourceType == "APPLE_MUSIC" }
-                val appleIds = appleSongs.mapNotNull { it.audioUri ?: it.id }
+                val appleIds = appleSongs.map { it.audioUri ?: it.id }
                 val appleIndex = appleSongs.indexOfFirst { it.id == restoredCurrent.id }
                     .takeIf { it >= 0 } ?: 0
                 if (appleIds.isNotEmpty()) {
@@ -710,6 +709,8 @@ fun CalmMusic(app: CalmMusic) {
             var newSongCount: Int? = null
             var wasAdded = false
             var alreadyInPlaylist = false
+            var snackbarMessage: String? = null
+
             try {
                 withContext(Dispatchers.IO) {
                     val entity = com.calmapps.calmmusic.data.SongEntity(
@@ -745,7 +746,7 @@ fun CalmMusic(app: CalmMusic) {
                 }
 
                 if (newSongCount != null) {
-                    val count = newSongCount!!
+                    val count = newSongCount
                     libraryPlaylists = libraryPlaylists.map { existingPlaylist ->
                         if (existingPlaylist.id == playlist.id) {
                             existingPlaylist.copy(songCount = count)
@@ -755,33 +756,26 @@ fun CalmMusic(app: CalmMusic) {
                     }
                 }
 
-                when {
-                    wasAdded -> {
-                        snackbarHostState.showSnackbar(
-                            message = "Added \"${song.title}\" to \"${playlist.name}\"",
-                            withDismissAction = false,
-                            duration = SnackbarDurationMMD.Short,
-                        )
-                    }
-                    alreadyInPlaylist -> {
-                        snackbarHostState.showSnackbar(
-                            message = "This song is already in \"${playlist.name}\"",
-                            withDismissAction = false,
-                            duration = SnackbarDurationMMD.Short,
-                        )
-                    }
+                snackbarMessage = when {
+                    wasAdded -> "Added \"${song.title}\" to \"${playlist.name}\""
+                    alreadyInPlaylist -> "This song is already in \"${playlist.name}\""
+                    else -> null
                 }
             } catch (e: Exception) {
                 playlistsError = e.message ?: "Failed to add to playlist"
-                snackbarHostState.showSnackbar(
-                    message = "Couldn't add to playlist",
-                    withDismissAction = false,
-                    duration = SnackbarDurationMMD.Short,
-                )
+                snackbarMessage = "Couldn't add to playlist"
             } finally {
                 if (wasAdded || alreadyInPlaylist) {
                     showAddToPlaylistDialog = false
                 }
+            }
+
+            snackbarMessage?.let { message ->
+                snackbarHostState.showSnackbar(
+                    message = message,
+                    withDismissAction = false,
+                    duration = SnackbarDurationMMD.Short,
+                )
             }
         }
     }
@@ -792,7 +786,8 @@ fun CalmMusic(app: CalmMusic) {
         }
         if (currentDestination?.route != Screen.Playlists.route && isPlaylistsEditMode) {
             isPlaylistsEditMode = false
-            playlistsEditSelection = emptySet()
+            playlistEditSelectionIds.clear()
+            playlistEditSelectionCount = 0
         }
     }
 
@@ -940,6 +935,19 @@ fun CalmMusic(app: CalmMusic) {
             songsError = null
             playlistsError = null
             albumsError = null
+
+            // Throttle full Apple Music library syncs so we don't hit the
+            // network and database on every process start. If we have synced
+            // recently and already have library content, skip this pass.
+            val now = System.currentTimeMillis()
+            val lastSync = settingsManager.getLastAppleMusicSyncMillis()
+            val hasExistingSongs = librarySongs.isNotEmpty()
+            val minSyncIntervalMillis = 6L * 60L * 60L * 1000L // 6 hours
+
+            if (hasExistingSongs && now - lastSync < minSyncIntervalMillis) {
+                return@LaunchedEffect
+            }
+
             try {
                 val songs = app.appleMusicApiClient.getLibrarySongs(limit = 200)
                 withContext(Dispatchers.IO) {
@@ -1006,6 +1014,10 @@ fun CalmMusic(app: CalmMusic) {
                         artistDao.upsertAll(artistEntities)
                     }
                 }
+
+                // Record successful sync time for future throttling.
+                settingsManager.updateLastAppleMusicSyncMillis(System.currentTimeMillis())
+
                 val (allSongs, allAlbums) = withContext(Dispatchers.IO) {
                     val songsFromDb = songDao.getAllSongs()
                     val albumsFromDb = albumDao.getAllAlbums()
@@ -1097,7 +1109,14 @@ fun CalmMusic(app: CalmMusic) {
     }
 
     LaunchedEffect(includeLocalMusic, localMusicFolders) {
-        resyncLocalLibrary(includeLocalMusic, localMusicFolders)
+        // Debounce local library resyncs so that rapid settings changes or
+        // multiple quick folder selections don't trigger repeated full scans.
+        kotlinx.coroutines.flow.flowOf(includeLocalMusic to localMusicFolders)
+            .distinctUntilChanged()
+            .debounce(500L)
+            .collectLatest { (include, folders) ->
+                resyncLocalLibrary(include, folders)
+            }
     }
 
     Box(
@@ -1111,7 +1130,8 @@ fun CalmMusic(app: CalmMusic) {
                             if (currentDestination?.route == Screen.Playlists.route && isPlaylistsEditMode) {
                                 IconButton(onClick = {
                                     isPlaylistsEditMode = false
-                                    playlistsEditSelection = emptySet()
+                                    playlistEditSelectionIds.clear()
+                                    playlistEditSelectionCount = 0
                                 }) {
                                     Icon(
                                         imageVector = Icons.Outlined.Clear,
@@ -1198,7 +1218,6 @@ fun CalmMusic(app: CalmMusic) {
                                 if (currentDestination?.route == Screen.Playlists.route && libraryPlaylists.isNotEmpty() && !isPlaylistsEditMode) {
                                     IconButton(onClick = {
                                         isPlaylistsEditMode = true
-                                        playlistsEditSelection = emptySet()
                                     }) {
                                         Icon(
                                             imageVector = Icons.Outlined.Edit,
@@ -1219,6 +1238,78 @@ fun CalmMusic(app: CalmMusic) {
                                 }
                             }
 
+                            if (
+                                currentDestination?.route == Screen.Playlists.route &&
+                                isPlaylistsEditMode &&
+                                playlistEditSelectionCount > 0
+                            ) {
+                                OutlinedButtonMMD(
+                                    contentPadding = PaddingValues(8.dp),
+                                    modifier = Modifier.padding(horizontal = 8.dp),
+                                    onClick = {
+                                        val idsToDelete = playlistEditSelectionIds.toSet()
+                                        if (idsToDelete.isNotEmpty()) {
+                                            playlistScope.launch {
+                                                val currentPlaylistsById = libraryPlaylists.associateBy { it.id }
+                                                var snackbarMessage: String? = null
+
+                                                try {
+                                                    val remainingPlaylists = withContext(Dispatchers.IO) {
+                                                        idsToDelete.forEach { id ->
+                                                            playlistDao.deleteTracksForPlaylist(id)
+                                                            val playlistInfo = currentPlaylistsById[id]
+                                                            val entity = com.calmapps.calmmusic.data.PlaylistEntity(
+                                                                id = id,
+                                                                name = playlistInfo?.name ?: "",
+                                                                description = playlistInfo?.description,
+                                                            )
+                                                            playlistDao.deletePlaylist(entity)
+                                                        }
+                                                        playlistDao.getAllPlaylistsWithSongCount()
+                                                    }
+                                                    libraryPlaylists = remainingPlaylists.map { playlist ->
+                                                        PlaylistUiModel(
+                                                            id = playlist.id,
+                                                            name = playlist.name,
+                                                            description = playlist.description,
+                                                            songCount = playlist.songCount,
+                                                        )
+                                                    }
+                                                    val deletedCount = idsToDelete.size
+                                                    snackbarMessage = if (deletedCount == 1) {
+                                                        "Deleted 1 playlist"
+                                                    } else {
+                                                        "Deleted ${deletedCount} playlists"
+                                                    }
+                                                } catch (e: Exception) {
+                                                    playlistsError = e.message ?: "Failed to delete playlists"
+                                                    snackbarMessage = "Couldn't delete playlists"
+                                                } finally {
+                                                    playlistEditSelectionIds.clear()
+                                                    playlistEditSelectionCount = 0
+                                                    isPlaylistsEditMode = false
+                                                }
+
+                                                snackbarMessage?.let { message ->
+                                                    snackbarHostState.showSnackbar(
+                                                        message = message,
+                                                        withDismissAction = false,
+                                                        duration = SnackbarDurationMMD.Short,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+                                ) {
+                                    TextMMD(
+                                        text = "Delete $playlistEditSelectionCount",
+                                        textAlign = TextAlign.Center,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                            }
+
                             if (currentDestination?.route == Screen.PlaylistAddSongs.route) {
                                 ButtonMMD(
                                     contentPadding = PaddingValues(8.dp),
@@ -1230,6 +1321,7 @@ fun CalmMusic(app: CalmMusic) {
                                             navController.popBackStack()
                                         } else {
                                             playlistScope.launch {
+                                                var snackbarMessage: String? = null
                                                 try {
                                                     val existingEntities = withContext(Dispatchers.IO) {
                                                         playlistDao.getSongsForPlaylist(playlist.id)
@@ -1288,32 +1380,28 @@ fun CalmMusic(app: CalmMusic) {
                                                             }
                                                         }
 
-                                                        snackbarHostState.showSnackbar(
-                                                            message = if (addedCount == 1) {
-                                                                "Added 1 song to \"${playlist.name}\""
-                                                            } else {
-                                                                "Added ${addedCount} songs to \"${playlist.name}\""
-                                                            },
-                                                            withDismissAction = false,
-                                                            duration = SnackbarDurationMMD.Short,
-                                                        )
+                                                        snackbarMessage = if (addedCount == 1) {
+                                                            "Added 1 song to \"${playlist.name}\""
+                                                        } else {
+                                                            "Added ${addedCount} songs to \"${playlist.name}\""
+                                                        }
                                                     } else {
-                                                        snackbarHostState.showSnackbar(
-                                                            message = "All selected songs are already in \"${playlist.name}\"",
-                                                            withDismissAction = false,
-                                                            duration = SnackbarDurationMMD.Short,
-                                                        )
+                                                        snackbarMessage = "All selected songs are already in \"${playlist.name}\""
                                                     }
                                                 } catch (e: Exception) {
                                                     playlistSongsError = e.message ?: "Failed to add songs to playlist"
-                                                    snackbarHostState.showSnackbar(
-                                                        message = "Couldn't add songs to playlist",
-                                                        withDismissAction = false,
-                                                        duration = SnackbarDurationMMD.Short,
-                                                    )
+                                                    snackbarMessage = "Couldn't add songs to playlist"
                                                 } finally {
                                                     playlistAddSongsSelection = emptySet()
                                                     navController.popBackStack()
+                                                }
+
+                                                snackbarMessage?.let { message ->
+                                                    snackbarHostState.showSnackbar(
+                                                        message = message,
+                                                        withDismissAction = false,
+                                                        duration = SnackbarDurationMMD.Short,
+                                                    )
                                                 }
                                             }
                                         }
@@ -1328,26 +1416,10 @@ fun CalmMusic(app: CalmMusic) {
                                 }
                             }
 
-                            if (currentDestination?.route == Screen.Playlists.route && isPlaylistsEditMode) {
-                                val selectedCount = playlistsEditSelection.size
-
-                                if (selectedCount > 0) {
-                                    OutlinedButtonMMD(
-                                        contentPadding = PaddingValues(8.dp),
-                                        modifier = Modifier.padding(horizontal = 8.dp),
-                                        onClick = {
-                                            showDeletePlaylistsSheet = true
-                                        },
-                                    ) {
-                                        TextMMD(
-                                            text = "Delete $selectedCount",
-                                            textAlign = TextAlign.Center,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                }
-                            }
+                            // Delete action for playlists is now localized inside
+                            // PlaylistsScreen so that selection state changes only
+                            // recompose that screen, keeping checkbox interactions
+                            // snappy.
 
                             if (
                                 nowPlayingSong != null &&
@@ -1376,7 +1448,7 @@ fun CalmMusic(app: CalmMusic) {
             bottomBar = {
                 if (currentDestination?.route in navItems.map { it.route }) {
                     NavigationBarMMD(
-                        modifier = Modifier.padding(bottom = 1.dp)
+                        modifier = Modifier.padding(bottom = 2.dp)
                     ) {
                         navItems.forEach { screen ->
                             val isSelected =
@@ -1424,7 +1496,6 @@ fun CalmMusic(app: CalmMusic) {
                         isLoading = isLoadingPlaylists,
                         errorMessage = playlistsError,
                         isInEditMode = isPlaylistsEditMode,
-                        selectedPlaylistIds = playlistsEditSelection,
                         onPlaylistClick = { playlist: PlaylistUiModel ->
                             selectedPlaylist = playlist
                             playlistSongs = emptyList()
@@ -1469,7 +1540,9 @@ fun CalmMusic(app: CalmMusic) {
                             }
                         },
                         onSelectionChanged = { selectedIds ->
-                            playlistsEditSelection = selectedIds
+                            playlistEditSelectionIds.clear()
+                            playlistEditSelectionIds.addAll(selectedIds)
+                            playlistEditSelectionCount = selectedIds.size
                         },
                     )
                 }
@@ -1895,7 +1968,7 @@ fun CalmMusic(app: CalmMusic) {
             val isLocalVideo = if (song.sourceType == "LOCAL_FILE") {
                 val uriString = song.audioUri ?: song.id
                 try {
-                    val lastSegment = Uri.parse(uriString).lastPathSegment ?: ""
+                    val lastSegment = uriString.toUri().lastPathSegment ?: ""
                     lastSegment.substringAfterLast('.', "").lowercase() == "mp4"
                 } catch (_: Exception) {
                     false
@@ -2024,138 +2097,8 @@ fun CalmMusic(app: CalmMusic) {
             }
         }
 
-        if (showDeletePlaylistsSheet && playlistsEditSelection.isNotEmpty()) {
-            val selectedCount = playlistsEditSelection.size
-            ModalBottomSheetMMD(
-                onDismissRequest = { showDeletePlaylistsSheet = false },
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextMMD(
-                            text = "Delete playlist${if (selectedCount == 1) "" else "s"}?",
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-
-                        IconButton(
-                            onClick = { showDeletePlaylistsSheet = false },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Close,
-                                contentDescription = "Cancel delete playlists"
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Text(
-                        text = if (selectedCount == 1) {
-                            "Are you sure you want to delete this playlist? This will remove it from your library but will not delete any songs."
-                        } else {
-                            "Are you sure you want to delete these $selectedCount playlists? This will remove them from your library but will not delete any songs."
-                        },
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Normal,
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    ButtonMMD(
-                        onClick = {
-                            val selectedIds = playlistsEditSelection.toSet()
-                            if (selectedIds.isEmpty()) {
-                                showDeletePlaylistsSheet = false
-                                return@ButtonMMD
-                            }
-                            playlistScope.launch {
-                                val currentPlaylistsById = libraryPlaylists.associateBy { it.id }
-                                try {
-                                    isLoadingPlaylists = true
-                                    val remainingPlaylists = withContext(Dispatchers.IO) {
-                                        selectedIds.forEach { id ->
-                                            playlistDao.deleteTracksForPlaylist(id)
-                                            val playlistInfo = currentPlaylistsById[id]
-                                            val entity = com.calmapps.calmmusic.data.PlaylistEntity(
-                                                id = id,
-                                                name = playlistInfo?.name ?: "",
-                                                description = playlistInfo?.description,
-                                            )
-                                            playlistDao.deletePlaylist(entity)
-                                        }
-                                        playlistDao.getAllPlaylistsWithSongCount()
-                                    }
-                                    libraryPlaylists = remainingPlaylists.map { playlist ->
-                                        PlaylistUiModel(
-                                            id = playlist.id,
-                                            name = playlist.name,
-                                            description = playlist.description,
-                                            songCount = playlist.songCount,
-                                        )
-                                    }
-                                    val deletedCount = selectedIds.size
-                                    playlistsEditSelection = emptySet()
-                                    isPlaylistsEditMode = false
-                                    showDeletePlaylistsSheet = false
-                                    snackbarHostState.showSnackbar(
-                                        message = if (deletedCount == 1) {
-                                            "Deleted 1 playlist"
-                                        } else {
-                                            "Deleted ${deletedCount} playlists"
-                                        },
-                                        withDismissAction = false,
-                                        duration = SnackbarDurationMMD.Short,
-                                    )
-                                } catch (e: Exception) {
-                                    playlistsError = e.message ?: "Failed to delete playlists"
-                                    showDeletePlaylistsSheet = false
-                                    snackbarHostState.showSnackbar(
-                                        message = "Couldn't delete playlists",
-                                        withDismissAction = false,
-                                        duration = SnackbarDurationMMD.Short,
-                                    )
-                                } finally {
-                                    isLoadingPlaylists = false
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(12.dp)
-                    ) {
-                        TextMMD(
-                            text = "Delete",
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.size(12.dp))
-
-                    OutlinedButtonMMD(
-                        onClick = { showDeletePlaylistsSheet = false },
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(12.dp)
-                    ) {
-                        TextMMD(
-                            text = "Back",
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.size(8.dp))
-                }
-            }
-        }
+        // Legacy playlist deletion bottom sheet has been removed. PlaylistsScreen
+        // now owns selection state and triggers deletion via a callback.
 
         Box(
             modifier = Modifier

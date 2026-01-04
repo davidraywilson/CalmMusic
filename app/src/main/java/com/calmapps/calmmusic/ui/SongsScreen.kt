@@ -82,12 +82,16 @@ fun SongsScreen(
 
             else -> {
                 LazyColumnMMD(contentPadding = PaddingValues(16.dp)) {
-                    items(songs) { song ->
+                    items(
+                        items = songs,
+                        key = { it.id },
+                    ) { song ->
+                        val isLast = song.id == songs.lastOrNull()?.id
                         SongItem(
                             song = song,
                             isCurrentlyPlaying = song.id == currentSongId,
                             onClick = { onPlaySongClick(song) },
-                            showDivider = song != songs.lastOrNull(),
+                            showDivider = !isLast,
                         )
                     }
                 }

@@ -8,18 +8,27 @@ import androidx.documentfile.provider.DocumentFile
 object LocalMusicScanner {
     private val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "aac", "flac", "wav", "ogg", "mp4")
 
+    /**
+     * Scan the given folders for audio files.
+     *
+     * Implementation note: this performs a single-pass traversal over the
+     * folder trees and periodically reports progress rather than pre-counting
+     * all audio files up front. This avoids doing two complete SAF walks,
+     * which can be very expensive on large storage volumes.
+     */
     suspend fun scanFolders(
         context: Context,
         folderUris: Set<String>,
         onProgress: suspend (processed: Int, total: Int) -> Unit = { _, _ -> },
     ): List<SongEntity> {
         val result = mutableListOf<SongEntity>()
-        val total = countAudioFiles(context, folderUris)
-        if (total <= 0) {
-            onProgress(0, 0)
-            return emptyList()
-        }
+
+        // Best-effort total count, used only for progress UI. We avoid a full
+        // pre-pass and instead approximate the total based on discovered
+        // folders/files.
+        var estimatedTotal = 0
         var processed = 0
+        var lastProgressUpdateTime = 0L
 
         for (uriString in folderUris) {
             val treeUri = try { Uri.parse(uriString) } catch (_: Exception) { continue }
@@ -38,6 +47,10 @@ object LocalMusicScanner {
                         val name = child.name ?: continue
                         val ext = name.substringAfterLast('.', "").lowercase()
                         if (ext in AUDIO_EXTENSIONS) {
+                            // Increment our best-effort total as we discover
+                            // new matching files.
+                            estimatedTotal++
+
                             val uri = child.uri
                             val meta = extractMetadata(context, uri)
                             val titleFromName = name.substringBeforeLast('.', name)
@@ -75,32 +88,28 @@ object LocalMusicScanner {
                             )
 
                             processed++
-                            onProgress(processed, total)
+
+                            // Throttle progress updates to avoid excessive
+                            // cross-thread chatter when scanning many files.
+                            val now = System.currentTimeMillis()
+                            if (processed == estimatedTotal || now - lastProgressUpdateTime > 200L) {
+                                lastProgressUpdateTime = now
+                                onProgress(processed, estimatedTotal)
+                            }
                         }
                     }
                 }
             }
         }
-        return result
-    }
 
-    private suspend fun countAudioFiles(context: Context, folderUris: Set<String>): Int {
-        var total = 0
-        for (uriString in folderUris) {
-            val treeUri = try { Uri.parse(uriString) } catch (_: Exception) { continue }
-            val root = DocumentFile.fromTreeUri(context, treeUri) ?: continue
-            val stack = ArrayDeque<DocumentFile>()
-            stack.add(root)
-            while (stack.isNotEmpty()) {
-                val dir = stack.removeFirst()
-                val children = try { dir.listFiles().toList() } catch (_: Exception) { emptyList() }
-                for (child in children) {
-                    if (child.isDirectory) stack.add(child)
-                    else if (child.isFile && child.name?.substringAfterLast('.', "")?.lowercase() in AUDIO_EXTENSIONS) total++
-                }
-            }
+        // Ensure a final progress update when we have scanned everything.
+        if (processed == 0 && estimatedTotal == 0) {
+            onProgress(0, 0)
+        } else {
+            onProgress(processed, estimatedTotal.coerceAtLeast(processed))
         }
-        return total
+
+        return result
     }
 
     private data class LocalMetadata(

@@ -13,7 +13,7 @@ import androidx.room.RoomDatabase
         PlaylistEntity::class,
         PlaylistTrackEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class CalmMusicDatabase : RoomDatabase() {

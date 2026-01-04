@@ -20,23 +20,37 @@ class CalmMusic : Application() {
         }
     }
 
-    lateinit var authenticationManager: AuthenticationManager
-        private set
+    val tokenProvider: SimpleTokenProvider by lazy {
+        // In a real app, developer tokens should come from a backend service.
+        SimpleTokenProvider(
+            initialDeveloperToken = "", // TODO: fetch developer token from your backend
+            initialMusicUserToken = null,
+            context = this,
+        )
+    }
 
-    lateinit var mediaPlayerController: MediaPlayerController
-        private set
+    val authenticationManager: AuthenticationManager by lazy {
+        AuthenticationFactory.createAuthenticationManager(this)
+    }
 
-    lateinit var tokenProvider: SimpleTokenProvider
-        private set
+    val mediaPlayerController: MediaPlayerController by lazy {
+        MediaPlayerControllerFactory.createLocalController(
+            this,
+            tokenProvider,
+        )
+    }
 
-    lateinit var appleMusicAuthManager: AppleMusicAuthManager
-        private set
+    val appleMusicAuthManager: AppleMusicAuthManager by lazy {
+        AppleMusicAuthManager(authenticationManager, tokenProvider)
+    }
 
-    lateinit var appleMusicPlayer: AppleMusicPlayer
-        private set
+    val appleMusicPlayer: AppleMusicPlayer by lazy {
+        AppleMusicPlayer(mediaPlayerController)
+    }
 
-    lateinit var appleMusicApiClient: AppleMusicApiClient
-        private set
+    val appleMusicApiClient: AppleMusicApiClient by lazy {
+        AppleMusicApiClientImpl.create(tokenProvider = tokenProvider)
+    }
 
     lateinit var settingsManager: CalmMusicSettingsManager
         private set
@@ -44,23 +58,7 @@ class CalmMusic : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // In a real app, developer tokens should come from a backend service.
-        tokenProvider = SimpleTokenProvider(
-            initialDeveloperToken = "", // TODO: fetch developer token from your backend
-            initialMusicUserToken = null,
-            context = this,
-        )
-
-        authenticationManager = AuthenticationFactory.createAuthenticationManager(this)
-        mediaPlayerController = MediaPlayerControllerFactory.createLocalController(
-            this,
-            tokenProvider,
-        )
-
-        appleMusicAuthManager = AppleMusicAuthManager(authenticationManager, tokenProvider)
-        appleMusicPlayer = AppleMusicPlayer(mediaPlayerController)
-        appleMusicApiClient = AppleMusicApiClientImpl.create(tokenProvider = tokenProvider)
-
+        // Settings are lightweight; initialize eagerly so flows are ready.
         settingsManager = CalmMusicSettingsManager(this)
     }
 }

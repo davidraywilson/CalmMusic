@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mudita.mmd.components.checkbox.CheckboxMMD
 import com.mudita.mmd.components.lazy.LazyColumnMMD
 import com.mudita.mmd.components.text.TextMMD
 
@@ -96,7 +97,7 @@ private fun SelectableSongItem(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Checkbox(
+            CheckboxMMD(
                 checked = isSelected,
                 onCheckedChange = { onToggleSelected() },
             )

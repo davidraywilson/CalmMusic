@@ -74,7 +74,7 @@ fun SettingsScreen(
 
         if (selectedTab == 0) {
             // Streaming tab - Apple Music settings
-            LazyColumn(
+            LazyColumnMMD(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.Top,
             ) {

@@ -18,6 +18,15 @@ class CalmMusicSettingsManager(context: Context) {
     private val _localMusicFolders = MutableStateFlow(getLocalMusicFoldersSync())
     val localMusicFolders: StateFlow<Set<String>> = _localMusicFolders.asStateFlow()
 
+    // Apple Music sync metadata (not exposed as flows for now; simple perf knob).
+    fun getLastAppleMusicSyncMillis(): Long {
+        return prefs.getLong(KEY_LAST_APPLE_MUSIC_SYNC_MILLIS, 0L)
+    }
+
+    fun updateLastAppleMusicSyncMillis(value: Long) {
+        prefs.edit { putLong(KEY_LAST_APPLE_MUSIC_SYNC_MILLIS, value) }
+    }
+
     fun setIncludeLocalMusic(enabled: Boolean) {
         prefs.edit { putBoolean(KEY_INCLUDE_LOCAL_MUSIC, enabled) }
         _includeLocalMusic.value = enabled
@@ -51,5 +60,6 @@ class CalmMusicSettingsManager(context: Context) {
         private const val PREFS_NAME = "calmmusic_settings"
         private const val KEY_INCLUDE_LOCAL_MUSIC = "include_local_music"
         private const val KEY_LOCAL_MUSIC_FOLDERS = "local_music_folders"
+        private const val KEY_LAST_APPLE_MUSIC_SYNC_MILLIS = "last_apple_music_sync_millis"
     }
 }

@@ -13,6 +13,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -20,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mudita.mmd.components.buttons.ButtonMMD
 import com.mudita.mmd.components.buttons.FloatingActionButtonMMD
+import com.mudita.mmd.components.lazy.LazyColumnMMD
 import com.mudita.mmd.components.text.TextMMD
 
 data class PlaylistUiModel(
@@ -36,11 +40,20 @@ fun PlaylistsScreen(
     isLoading: Boolean,
     errorMessage: String?,
     isInEditMode: Boolean,
-    selectedPlaylistIds: Set<String>,
     onPlaylistClick: (PlaylistUiModel) -> Unit,
     onAddPlaylistClick: () -> Unit,
     onSelectionChanged: (Set<String>) -> Unit,
 ) {
+    val selectedState = remember { mutableStateMapOf<String, Boolean>() }
+
+    // When edit mode is turned off from outside this screen, clear local selection state
+    // and notify the parent that selection has been cleared.
+    LaunchedEffect(isInEditMode) {
+        if (!isInEditMode && selectedState.isNotEmpty()) {
+            selectedState.clear()
+            onSelectionChanged(emptySet())
+        }
+    }
     Box(
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -92,21 +105,28 @@ fun PlaylistsScreen(
             }
 
             else -> {
-                LazyColumn(contentPadding = PaddingValues(16.dp)) {
-                    items(playlists) { playlist ->
-                        val isSelected = selectedPlaylistIds.contains(playlist.id)
+                LazyColumnMMD(contentPadding = PaddingValues(16.dp)) {
+                    items(
+                        items = playlists,
+                        key = { it.id },
+                    ) { playlist ->
+                        val isSelected = selectedState[playlist.id] == true
                         if (isInEditMode) {
                             SelectablePlaylistItem(
                                 playlist = playlist,
                                 isSelected = isSelected,
-                                onToggleSelected = {
-                                    val newSelection = selectedPlaylistIds.toMutableSet()
-                                    if (isSelected) {
-                                        newSelection.remove(playlist.id)
+                                onSelectionChange = { nowSelected ->
+                                    if (nowSelected) {
+                                        selectedState[playlist.id] = true
                                     } else {
-                                        newSelection.add(playlist.id)
+                                        selectedState.remove(playlist.id)
                                     }
-                                    onSelectionChanged(newSelection)
+
+                                    val currentSelectedIds = selectedState
+                                        .filterValues { it }
+                                        .keys
+
+                                    onSelectionChanged(currentSelectedIds)
                                 },
                                 showDivider = playlist != playlists.lastOrNull(),
                             )
