@@ -13,8 +13,36 @@ CalmMusic is a minimal, mindful music player built for de‑googled and E‑ink 
 
 ## Screenshots
 
-_Screenshots coming soon._  
-_(You can add your own screenshots here using an HTML table similar to CalmCast’s README.)_
+<table>
+<tr>
+  <td><img src="CalmMusic Screens/screen_1.png" alt="CalmMusic screenshot 1"></td>
+  <td><img src="CalmMusic Screens/screen_2.png" alt="CalmMusic screenshot 2"></td>
+  <td><img src="CalmMusic Screens/screen_3.png" alt="CalmMusic screenshot 3"></td>
+  <td><img src="CalmMusic Screens/screen_4.png" alt="CalmMusic screenshot 4"></td>
+</tr>
+<tr>
+  <td><img src="CalmMusic Screens/screen_5.png" alt="CalmMusic screenshot 5"></td>
+  <td><img src="CalmMusic Screens/screen_6.png" alt="CalmMusic screenshot 6"></td>
+  <td><img src="CalmMusic Screens/screen_7.png" alt="CalmMusic screenshot 7"></td>
+  <td><img src="CalmMusic Screens/screen_8.png" alt="CalmMusic screenshot 8"></td>
+</tr>
+<tr>
+  <td><img src="CalmMusic Screens/screen_9.png" alt="CalmMusic screenshot 9"></td>
+  <td><img src="CalmMusic Screens/screen_10.png" alt="CalmMusic screenshot 10"></td>
+  <td><img src="CalmMusic Screens/screen_11.png" alt="CalmMusic screenshot 11"></td>
+  <td><img src="CalmMusic Screens/screen_12.png" alt="CalmMusic screenshot 12"></td>
+</tr>
+<tr>
+  <td><img src="CalmMusic Screens/screen_13.png" alt="CalmMusic screenshot 13"></td>
+  <td><img src="CalmMusic Screens/screen_14.png" alt="CalmMusic screenshot 14"></td>
+  <td><img src="CalmMusic Screens/screen_15.png" alt="CalmMusic screenshot 15"></td>
+  <td><img src="CalmMusic Screens/screen_16.png" alt="CalmMusic screenshot 16"></td>
+</tr>
+<tr>
+  <td><img src="CalmMusic Screens/screen_17.png" alt="CalmMusic screenshot 17"></td>
+  <td><img src="CalmMusic Screens/screen_18.png" alt="CalmMusic screenshot 18"></td>
+</tr>
+</table>
 
 ## What is CalmMusic?
 
