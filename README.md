@@ -46,64 +46,62 @@ CalmMusic is a minimal, mindful music player built for de‑googled and E‑ink 
 
 ## What is CalmMusic?
 
-CalmMusic keeps music listening calm. It’s built with Kotlin and Jetpack Compose to prioritize your attention, privacy, and sense of ownership over your library. No accounts, no analytics, no growth hacks—just your music, your way.
+CalmMusic is a simple music player for people who want less distraction and more music. There are no accounts to create, no tracking, and no clutter—just your songs and albums in a calm interface.
 
 It brings together:
 
-- Your Apple Music catalog and playlists (via Apple MusicKit for Android + Web API)
-- Your local audio files from folders you explicitly choose
-- A unified, simple UI for browsing, queueing, and playing music
+- Your Apple Music catalog and playlists (if you choose to sign in)
+- Your local audio files from folders you pick on your device
+- One place to browse, search, and play your music
 
 ## Core principles (Mudita Mindful Design)
 
-- **Simplicity:** One clear purpose per screen; no feature bloat
-- **Privacy:** No tracking, no data monetization, no third‑party analytics
-- **Intention:** Tools that support deliberate listening, not habit loops
-- **Focus:** Clean UI that stays out of your way
-- **Ownership:** Local files and playlists under your control
+- **Simplicity:** Each screen has one clear job and stays lightweight
+- **Privacy:** Your listening stays on your device; nothing is sold or tracked
+- **Intention:** Designed to support relaxed, intentional listening
+- **Focus:** A clean interface that doesn’t compete for your attention
+- **Ownership:** You choose what music is included and how it’s organized
 
 ## Highlights
 
-- **Unified library view**
-  - Browse songs, albums, artists, and playlists in one place
-  - Apple Music tracks and local files share the same library model
+- **One library for everything**
+  - See songs, albums, artists, and playlists together
+  - Apple Music tracks and local files appear side by side
 
-- **Apple Music integration**
-  - Sign in with Apple Music using MusicKit for Android
-  - Search the Apple Music catalog
+- **Apple Music, when you want it**
+  - Sign in with Apple Music to search the catalog
   - Browse your Apple Music library songs and playlists
-  - Play full tracks via Apple’s native playback controller
+  - Play full tracks using Apple’s official player
 
-- **Local music support**
-  - Choose folders via the Storage Access Framework (SAF)
-  - Recursively scans supported audio files and reads tags (title, artist, album, duration, etc.)
-  - Groups local music by artist and album with stable IDs
+- **Local music made easy**
+  - Pick the folders on your device that hold your music
+  - CalmMusic scans them for audio files and reads basic song info
+  - Your local songs are grouped by artist and album
 
 - **Playlists & queue**
-  - Create and manage local playlists stored in a Room database
-  - Unified playback queue for Apple Music and local songs
-  - Shuffle and repeat modes that keep UI and players in sync
+  - Create your own playlists inside CalmMusic
+  - Mix Apple Music tracks and local files in the same queue
+  - Use shuffle and repeat to listen the way you like
 
 - **Mindful playback**
-  - Focused Now Playing screen tuned for E‑ink readability
-  - Simple playback controls without visual noise or dark patterns
-  - Works well on low‑distraction, de‑googled devices
+  - A quiet Now Playing screen with large text and simple controls
+  - Designed to work well on E‑ink and low‑distraction devices
 
 ## Why it matters
 
-- **Privacy‑respecting**
-  - No analytics SDKs, no tracking, no ads
-  - Settings and local library metadata are stored on‑device
-  - Apple Music requests go directly from your device to Apple’s servers
+- **Respect for your privacy**
+  - No ads, no tracking, no hidden analytics
+  - Your settings and library details stay on your device
+  - Apple Music features talk only to Apple’s own servers
 
-- **Distraction‑free**
-  - No algorithmic “engagement” feeds
-  - No badges, streaks, or manipulative prompts
-  - Just enough UI to find and enjoy your music
+- **Less noise, more music**
+  - No “engagement” feeds or attention‑grabbing tricks
+  - No badges, streaks, or pop‑ups pushing you to listen more
+  - Just enough interface to quickly get to what you want to hear
 
-- **Resilient**
-  - Local music continues to work without network access
-  - Apple Music playback uses Apple’s official SDK for reliability
+- **Works even when you’re offline**
+  - Your local music is always available
+  - Apple Music playback uses Apple’s official tools for stability
 
 ## Tech stack (for the curious)
 
@@ -122,29 +120,26 @@ It brings together:
 
 ## Privacy & data
 
-- **No account required for local playback**
-- **No third‑party analytics or tracking**
-- **No data sent to any server controlled by the app author**
-- **Apple Music:**
-  - Uses your Apple Music developer token and music user token only to talk to Apple Music’s APIs
-  - Tokens are stored locally and used solely for Apple Music features
+- You can use local music without creating any account
+- There is no tracking, advertising, or data selling
+- The app does not send your listening data to the developer
+- When you turn on Apple Music features:
+  - CalmMusic uses your Apple Music tokens only to talk to Apple’s services
+  - Those tokens are stored on your device and used only for Apple Music
 
 ### Local music behavior
 
-- You explicitly choose which folders to index via the system file picker
-- The app scans only those folders for supported audio files
-- Extracted metadata (title, artist, album, etc.) is stored in a local Room database
-- You can clear and rescan your local library at any time
+- You choose which folders CalmMusic is allowed to scan
+- The app looks only in those folders for supported audio files
+- Basic song info (like title, artist, album) is saved in a local database
+- You can clear and rescan your local library whenever you like
 
 ## Roadmap
 
-Planned and aspirational ideas, all subject to change:
+Some ideas being explored (these may change over time):
 
-- Richer Apple Music library support (recently played, more filters)
-- Smarter playlist tools (reordering, duplicate detection)
-- Additional playback options (gapless playback tuning, replay behavior)
-- Deeper accessibility improvements (larger touch targets, contrast presets)
-- More E‑ink friendly refinements (refresh strategies, typography tweaks)
+- Finish Apple Music Support (currently not able to set up Apple Music)
+- Deeper Apple Music library integration (for example: more ways to sort and filter)
 
 ## For developers
 
