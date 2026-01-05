@@ -1,0 +1,19 @@
+<svg width="968" height="968" viewBox="0 0 968 968" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_181_70)">
+<rect width="968" height="968" fill="white"/>
+<rect x="16" y="16" width="936" height="936" rx="194" stroke="black" stroke-width="32"/>
+<circle cx="484" cy="484" r="48" fill="white" stroke="black" stroke-width="32"/>
+<mask id="path-3-inside-1_181_70" fill="white">
+<path d="M724 484C724 616.548 616.548 724 484 724C351.452 724 244 616.548 244 484C244 351.452 351.452 244 484 244C616.548 244 724 351.452 724 484ZM275.647 484C275.647 599.07 368.93 692.353 484 692.353C599.07 692.353 692.353 599.07 692.353 484C692.353 368.93 599.07 275.647 484 275.647C368.93 275.647 275.647 368.93 275.647 484Z"/>
+</mask>
+<path d="M724 484C724 616.548 616.548 724 484 724C351.452 724 244 616.548 244 484C244 351.452 351.452 244 484 244C616.548 244 724 351.452 724 484ZM275.647 484C275.647 599.07 368.93 692.353 484 692.353C599.07 692.353 692.353 599.07 692.353 484C692.353 368.93 599.07 275.647 484 275.647C368.93 275.647 275.647 368.93 275.647 484Z" stroke="black" stroke-width="64" mask="url(#path-3-inside-1_181_70)"/>
+<rect x="695.101" y="267.914" width="64" height="322.311" transform="rotate(21.7808 695.101 267.914)" fill="black" stroke="white" stroke-width="32"/>
+<rect x="554" y="566.801" width="64" height="32" transform="rotate(-23.7749 554 566.801)" fill="black"/>
+<rect x="704.889" y="223.205" width="80" height="80" rx="28" transform="rotate(21.78 704.889 223.205)" fill="black" stroke="white" stroke-width="32"/>
+</g>
+<defs>
+<clipPath id="clip0_181_70">
+<rect width="968" height="968" fill="white"/>
+</clipPath>
+</defs>
+</svg>
