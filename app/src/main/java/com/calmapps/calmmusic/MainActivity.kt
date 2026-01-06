@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -346,6 +347,7 @@ fun CalmMusic(app: CalmMusic) {
         if (isRescanningLocal) return
         isRescanningLocal = true
         localScanProgress = 0f
+        songsError = null
         try {
             if (!includeLocal) {
                 withContext(Dispatchers.IO) {
@@ -430,6 +432,8 @@ fun CalmMusic(app: CalmMusic) {
                                 artistDao.upsertAll(artistEntities)
                             }
                         }
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         songsError = e.message ?: "Failed to scan local music"
                     }
@@ -1311,6 +1315,8 @@ fun CalmMusic(app: CalmMusic) {
                         albumCount = artist.albumCount,
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 songsError = e.message ?: "Failed to load songs"
                 albumsError = e.message ?: "Failed to load albums"
