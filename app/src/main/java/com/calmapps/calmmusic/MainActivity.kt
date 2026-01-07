@@ -292,6 +292,8 @@ fun CalmMusic(app: CalmMusic) {
 
     var isRescanningLocal by remember { mutableStateOf(false) }
     var localScanProgress by remember { mutableStateOf(0f) }
+    var isIngestingLocal by remember { mutableStateOf(false) }
+    var localIngestProgress by remember { mutableStateOf(0f) }
 
     fun startAppleMusicAuth(activity: Activity) {
         val intent = app.appleMusicAuthManager.buildSignInIntent()
@@ -347,6 +349,8 @@ fun CalmMusic(app: CalmMusic) {
         if (isRescanningLocal) return
         isRescanningLocal = true
         localScanProgress = 0f
+        isIngestingLocal = false
+        localIngestProgress = 0f
         songsError = null
         try {
             if (!includeLocal) {
@@ -361,14 +365,36 @@ fun CalmMusic(app: CalmMusic) {
                         val localEntities = withContext(Dispatchers.IO) {
                             LocalMusicScanner.scanFolders(app, folders) { processed, total ->
                                 withContext(Dispatchers.Main) {
-                                    localScanProgress = if (total > 0) {
+                                    val raw = if (total > 0) {
                                         (processed.toFloat() / total.toFloat()).coerceIn(0f, 1f)
                                     } else {
                                         0f
                                     }
+                                    // Keep scan progress just below 100% while the
+                                    // SAF walk is still in progress. We'll only
+                                    // set it to 100% once the scan fully completes.
+                                    localScanProgress = raw.coerceAtMost(0.95f)
                                 }
                             }
                         }
+                        // Scan is now fully complete; mark 100% before we
+                        // transition to the ingest phase.
+                        localScanProgress = 1f
+
+                        // Start ingest phase: clear existing LOCAL_FILE rows and
+                        // then upsert the scanned entities, reporting coarse
+                        // progress so the UI can show a secondary progress bar.
+                        isIngestingLocal = true
+                        localIngestProgress = 0f
+
+                        // Delete existing LOCAL_FILE content first.
+                        withContext(Dispatchers.IO) {
+                            songDao.deleteBySourceType("LOCAL_FILE")
+                            albumDao.deleteBySourceType("LOCAL_FILE")
+                            artistDao.deleteBySourceType("LOCAL_FILE")
+                        }
+                        localIngestProgress = 0.25f
+
                         withContext(Dispatchers.IO) {
                             val artistEntities: List<com.calmapps.calmmusic.data.ArtistEntity> = localEntities
                                 .mapNotNull { entity ->
@@ -419,19 +445,22 @@ fun CalmMusic(app: CalmMusic) {
                                 .distinctBy { it.first }
                                 .map { it.second }
 
-                            songDao.deleteBySourceType("LOCAL_FILE")
-                            albumDao.deleteBySourceType("LOCAL_FILE")
-                            artistDao.deleteBySourceType("LOCAL_FILE")
                             if (localEntities.isNotEmpty()) {
                                 songDao.upsertAll(localEntities)
                             }
+                            localIngestProgress = 0.6f
+
                             if (albumEntities.isNotEmpty()) {
                                 albumDao.upsertAll(albumEntities)
                             }
+                            localIngestProgress = 0.8f
+
                             if (artistEntities.isNotEmpty()) {
                                 artistDao.upsertAll(artistEntities)
                             }
                         }
+                        // Mark ingest as complete.
+                        localIngestProgress = 1f
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -484,6 +513,7 @@ fun CalmMusic(app: CalmMusic) {
             }
         } finally {
             isRescanningLocal = false
+            isIngestingLocal = false
         }
     }
 
@@ -1872,6 +1902,7 @@ fun CalmMusic(app: CalmMusic) {
                         artists = libraryArtists,
                         isLoading = isLoadingSongs || isLoadingAlbums,
                         errorMessage = null,
+                        isSyncInProgress = isRescanningLocal || isIngestingLocal,
                         onArtistClick = { artist ->
                             val artistName = artist.name
                             val artistId = artist.id
@@ -1930,6 +1961,7 @@ fun CalmMusic(app: CalmMusic) {
                         isLoading = isLoadingSongs,
                         errorMessage = songsError,
                         currentSongId = currentSongId,
+                        isSyncInProgress = isRescanningLocal || isIngestingLocal,
                         onPlaySongClick = { song: SongUiModel ->
                             val index = librarySongs.indexOfFirst { it.id == song.id }
                             val startIndex = if (index >= 0) index else 0
@@ -1946,6 +1978,7 @@ fun CalmMusic(app: CalmMusic) {
                         albums = libraryAlbums,
                         isLoading = isLoadingAlbums,
                         errorMessage = albumsError,
+                        isSyncInProgress = isRescanningLocal || isIngestingLocal,
                         onAlbumClick = { album ->
                             selectedAlbum = album
                             albumSongs = emptyList()
@@ -2350,6 +2383,8 @@ fun CalmMusic(app: CalmMusic) {
                         },
                         isRescanningLocal = isRescanningLocal,
                         localScanProgress = localScanProgress,
+                        isIngestingLocal = isIngestingLocal,
+                        localIngestProgress = localIngestProgress,
                     )
                 }
             }

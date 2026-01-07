@@ -36,6 +36,7 @@ fun AlbumsScreen(
     albums: List<AlbumUiModel>,
     isLoading: Boolean,
     errorMessage: String?,
+    isSyncInProgress: Boolean,
     onAlbumClick: (AlbumUiModel) -> Unit = {},
 ) {
     Box(
@@ -60,6 +61,15 @@ fun AlbumsScreen(
                         TextMMD(text = "Error loading albums")
                         TextMMD(text = errorMessage)
                     }
+                }
+            }
+
+            albums.isEmpty() && isSyncInProgress -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    TextMMD(text = "Music sync is in progress…")
                 }
             }
 
