@@ -34,9 +34,7 @@ fun ArtistsScreen(
     artists: List<ArtistUiModel>,
     isLoading: Boolean,
     errorMessage: String?,
-    hasAnySongs: Boolean,
-    onOpenStreamingSettingsClick: () -> Unit,
-    onOpenLocalSettingsClick: () -> Unit,
+    isSyncInProgress: Boolean,
     onArtistClick: (ArtistUiModel) -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
@@ -59,6 +57,15 @@ fun ArtistsScreen(
                         TextMMD(text = "Error loading artists")
                         TextMMD(text = errorMessage)
                     }
+                }
+            }
+
+            artists.isEmpty() && isSyncInProgress -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    TextMMD(text = "Music sync is in progress…")
                 }
             }
 

@@ -42,6 +42,7 @@ fun SongsScreen(
     isLoading: Boolean,
     errorMessage: String?,
     currentSongId: String?,
+    isSyncInProgress: Boolean,
     onPlaySongClick: (SongUiModel) -> Unit,
     onShuffleClick: () -> Unit,
     onOpenStreamingSettingsClick: () -> Unit,
@@ -69,6 +70,15 @@ fun SongsScreen(
                         TextMMD(text = "Error loading songs")
                         TextMMD(text = errorMessage)
                     }
+                }
+            }
+
+            songs.isEmpty() && isSyncInProgress -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    TextMMD(text = "Music sync is in progress…")
                 }
             }
 

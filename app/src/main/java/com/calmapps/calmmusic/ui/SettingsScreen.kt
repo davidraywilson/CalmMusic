@@ -49,6 +49,8 @@ fun SettingsScreen(
     onRescanLocalMusicClick: () -> Unit,
     isRescanningLocal: Boolean,
     localScanProgress: Float,
+    isIngestingLocal: Boolean,
+    localIngestProgress: Float,
 ) {
     val tabOptions = listOf("Streaming", "Local")
 
@@ -209,7 +211,7 @@ fun SettingsScreen(
                         }
                     }
 
-                    if (isRescanningLocal) {
+                    if (isRescanningLocal && !isIngestingLocal) {
                         item {
                             Column(
                                 modifier = Modifier
@@ -238,6 +240,42 @@ fun SettingsScreen(
                                         (localScanProgress * 100f).toInt().coerceIn(0, 100)
                                     TextMMD(
                                         text = "Scanning local music… $percent%",
+                                        fontSize = 14.sp,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (isIngestingLocal) {
+                        item {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 4.dp, end = 4.dp, top = 4.dp),
+                                ) {
+                                    SliderMMD(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        value = localIngestProgress.coerceIn(0f, 1f),
+                                        onValueChange = { },
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                ) {
+                                    val ingestPercent =
+                                        (localIngestProgress * 100f).toInt().coerceIn(0, 100)
+                                    TextMMD(
+                                        text = "Adding music to library… $ingestPercent%",
                                         fontSize = 14.sp,
                                     )
                                 }
