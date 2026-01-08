@@ -239,7 +239,7 @@ fun SettingsScreen(
                                     val percent =
                                         (localScanProgress * 100f).toInt().coerceIn(0, 100)
                                     TextMMD(
-                                        text = "Scanning local music… $percent%",
+                                        text = "Step 1 of 2 – Scanning folders for audio files… $percent%",
                                         fontSize = 14.sp,
                                     )
                                 }
@@ -275,7 +275,7 @@ fun SettingsScreen(
                                     val ingestPercent =
                                         (localIngestProgress * 100f).toInt().coerceIn(0, 100)
                                     TextMMD(
-                                        text = "Adding music to library… $ingestPercent%",
+                                        text = "Step 2 of 2 – Adding music to library… $ingestPercent%",
                                         fontSize = 14.sp,
                                     )
                                 }

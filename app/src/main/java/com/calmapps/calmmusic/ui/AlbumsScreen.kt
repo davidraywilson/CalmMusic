@@ -37,6 +37,9 @@ fun AlbumsScreen(
     isLoading: Boolean,
     errorMessage: String?,
     isSyncInProgress: Boolean,
+    hasAnySongs: Boolean,
+    onOpenStreamingSettingsClick: () -> Unit,
+    onOpenLocalSettingsClick: () -> Unit,
     onAlbumClick: (AlbumUiModel) -> Unit = {},
 ) {
     Box(

@@ -94,9 +94,10 @@ class CalmMusicViewModel(
     suspend fun resyncLocalLibrary(
         includeLocal: Boolean,
         folders: Set<String>,
-        onProgress: (Float) -> Unit,
+        onScanProgress: (Float) -> Unit,
+        onIngestProgress: (Float) -> Unit,
     ): LibraryRepository.LocalResyncResult {
-        return libraryRepository.resyncLocalLibrary(includeLocal, folders, onProgress)
+        return libraryRepository.resyncLocalLibrary(includeLocal, folders, onScanProgress, onIngestProgress)
     }
 
     suspend fun addSongToPlaylist(

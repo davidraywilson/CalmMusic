@@ -334,127 +334,22 @@ fun CalmMusic(app: CalmMusic) {
         localIngestProgress = 0f
         songsError = null
         try {
-            if (!includeLocal) {
-                withContext(Dispatchers.IO) {
-                    songDao.deleteBySourceType("LOCAL_FILE")
-                    albumDao.deleteBySourceType("LOCAL_FILE")
-                    artistDao.deleteBySourceType("LOCAL_FILE")
-                }
-            } else {
-                if (folders.isNotEmpty()) {
-                    try {
-                        val localEntities = withContext(Dispatchers.IO) {
-                            LocalMusicScanner.scanFolders(app, folders) { processed, total ->
-                                withContext(Dispatchers.Main) {
-                                    val raw = if (total > 0) {
-                                        (processed.toFloat() / total.toFloat()).coerceIn(0f, 1f)
-                                    } else {
-                                        0f
-                                    }
-                                    // Keep scan progress just below 100% while the
-                                    // SAF walk is still in progress. We'll only
-                                    // set it to 100% once the scan fully completes.
-                                    localScanProgress = raw.coerceAtMost(0.95f)
-                                }
-                            }
-                        }
-                        // Scan is now fully complete; mark 100% before we
-                        // transition to the ingest phase.
-                        localScanProgress = 1f
-
-                        // Start ingest phase: clear existing LOCAL_FILE rows and
-                        // then upsert the scanned entities, reporting coarse
-                        // progress so the UI can show a secondary progress bar.
-                        isIngestingLocal = true
-                        localIngestProgress = 0f
-
-                        // Delete existing LOCAL_FILE content first.
-                        withContext(Dispatchers.IO) {
-                            songDao.deleteBySourceType("LOCAL_FILE")
-                            albumDao.deleteBySourceType("LOCAL_FILE")
-                            artistDao.deleteBySourceType("LOCAL_FILE")
-                        }
-                        localIngestProgress = 0.25f
-
-                        withContext(Dispatchers.IO) {
-                            val artistEntities: List<com.calmapps.calmmusic.data.ArtistEntity> = localEntities
-                                .mapNotNull { entity ->
-                                    val id = entity.artistId ?: return@mapNotNull null
-
-                                    // For local files, derive the display name from the Album Artist
-                                    // (which we encoded into artistId) so that artist rows and album
-                                    // rows are labeled consistently by album artist, not per-track
-                                    // artist strings that may contain features.
-                                    val name = if (entity.sourceType == "LOCAL_FILE" && id.startsWith("LOCAL_FILE:")) {
-                                        id.removePrefix("LOCAL_FILE:")
-                                    } else {
-                                        entity.artist.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                                    }
-
-                                    id to com.calmapps.calmmusic.data.ArtistEntity(
-                                        id = id,
-                                        name = name,
-                                        sourceType = entity.sourceType,
-                                    )
-                                }
-                                .distinctBy { it.first }
-                                .map { it.second }
-
-                            val albumEntities: List<AlbumEntity> = localEntities
-                                .mapNotNull { entity ->
-                                    val id = entity.albumId ?: return@mapNotNull null
-                                    val name = entity.album ?: return@mapNotNull null
-
-                                    // For local files, use the same album-artist-derived name that
-                                    // we store in ArtistEntity so albums are grouped and labeled by
-                                    // album artist. For other sources, fall back to the track artist
-                                    // string.
-                                    val artistName = if (entity.sourceType == "LOCAL_FILE" && (entity.artistId ?: "").startsWith("LOCAL_FILE:")) {
-                                        entity.artistId!!.removePrefix("LOCAL_FILE:")
-                                    } else {
-                                        entity.artist
-                                    }
-
-                                    id to AlbumEntity(
-                                        id = id,
-                                        name = name,
-                                        artist = artistName,
-                                        sourceType = entity.sourceType,
-                                        artistId = entity.artistId,
-                                    )
-                                }
-                                .distinctBy { it.first }
-                                .map { it.second }
-
-                            if (localEntities.isNotEmpty()) {
-                                songDao.upsertAll(localEntities)
-                            }
-                            localIngestProgress = 0.6f
-
-                            if (albumEntities.isNotEmpty()) {
-                                albumDao.upsertAll(albumEntities)
-                            }
-                            localIngestProgress = 0.8f
-
-                            if (artistEntities.isNotEmpty()) {
-                                artistDao.upsertAll(artistEntities)
-                            }
-                        }
-                        // Mark ingest as complete.
-                        localIngestProgress = 1f
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        songsError = e.message ?: "Failed to scan local music"
-                    }
-                } else {
-                    withContext(Dispatchers.IO) {
-                        songDao.deleteBySourceType("LOCAL_FILE")
-                        albumDao.deleteBySourceType("LOCAL_FILE")
-                        artistDao.deleteBySourceType("LOCAL_FILE")
-                    }
-                }
-            }
+            // Delegate the heavy lifting to the ViewModel/Repository layer so that
+            // database updates and UI models stay consistent in one place.
+            val result = viewModel.resyncLocalLibrary(
+                includeLocal = includeLocal,
+                folders = folders,
+                onScanProgress = { progress ->
+                    // Progress is reported from 0f..1f while walking SAF folders.
+                    localScanProgress = progress.coerceIn(0f, 1f)
+                },
+                onIngestProgress = { progress ->
+                    // Once ingestion begins, switch the UI to the ingest phase and update
+                    // its own progress bar from 0f..1f as Room writes complete.
+                    isIngestingLocal = true
+                    localIngestProgress = progress.coerceIn(0f, 1f)
+                },
+            )
 
             songsError = result.errorMessage
             librarySongs = result.songs
@@ -1538,6 +1433,9 @@ fun CalmMusic(app: CalmMusic) {
                         isLoading = isLoadingSongs || isLoadingAlbums,
                         errorMessage = null,
                         isSyncInProgress = isRescanningLocal || isIngestingLocal,
+                        hasAnySongs = librarySongs.isNotEmpty(),
+                        onOpenStreamingSettingsClick = openStreamingSettings,
+                        onOpenLocalSettingsClick = openLocalSettings,
                         onArtistClick = { artist ->
                             val artistName = artist.name
                             val artistId = artist.id
@@ -1616,6 +1514,9 @@ fun CalmMusic(app: CalmMusic) {
                         isLoading = isLoadingAlbums,
                         errorMessage = albumsError,
                         isSyncInProgress = isRescanningLocal || isIngestingLocal,
+                        hasAnySongs = librarySongs.isNotEmpty(),
+                        onOpenStreamingSettingsClick = openStreamingSettings,
+                        onOpenLocalSettingsClick = openLocalSettings,
                         onAlbumClick = { album ->
                             selectedAlbum = album
                             albumSongs = emptyList()

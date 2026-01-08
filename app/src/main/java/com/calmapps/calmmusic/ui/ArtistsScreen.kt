@@ -35,6 +35,9 @@ fun ArtistsScreen(
     isLoading: Boolean,
     errorMessage: String?,
     isSyncInProgress: Boolean,
+    hasAnySongs: Boolean,
+    onOpenStreamingSettingsClick: () -> Unit,
+    onOpenLocalSettingsClick: () -> Unit,
     onArtistClick: (ArtistUiModel) -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
