@@ -11,7 +11,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Shuffle
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -45,6 +44,8 @@ fun SongsScreen(
     currentSongId: String?,
     onPlaySongClick: (SongUiModel) -> Unit,
     onShuffleClick: () -> Unit,
+    onOpenStreamingSettingsClick: () -> Unit,
+    onOpenLocalSettingsClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -76,7 +77,12 @@ fun SongsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    TextMMD(text = "No songs in your library yet")
+                    LibraryOnboardingEmptyState(
+                        title = "No songs yet",
+                        body = "Connect Apple Music or choose local folders in Settings to start building your library.",
+                        onOpenStreamingSettingsClick = onOpenStreamingSettingsClick,
+                        onOpenLocalSettingsClick = onOpenLocalSettingsClick,
+                    )
                 }
             }
 

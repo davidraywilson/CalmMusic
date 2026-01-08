@@ -36,6 +36,9 @@ fun AlbumsScreen(
     albums: List<AlbumUiModel>,
     isLoading: Boolean,
     errorMessage: String?,
+    hasAnySongs: Boolean,
+    onOpenStreamingSettingsClick: () -> Unit,
+    onOpenLocalSettingsClick: () -> Unit,
     onAlbumClick: (AlbumUiModel) -> Unit = {},
 ) {
     Box(
@@ -68,7 +71,16 @@ fun AlbumsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    TextMMD(text = "No albums in your library yet")
+                    if (!hasAnySongs) {
+                        LibraryOnboardingEmptyState(
+                            title = "No albums yet",
+                            body = "Connect Apple Music or choose local folders in Settings to start building your library.",
+                            onOpenStreamingSettingsClick = onOpenStreamingSettingsClick,
+                            onOpenLocalSettingsClick = onOpenLocalSettingsClick,
+                        )
+                    } else {
+                        TextMMD(text = "No albums to show yet. Once your songs have album info, they'll appear here.")
+                    }
                 }
             }
 

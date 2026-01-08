@@ -34,6 +34,9 @@ fun ArtistsScreen(
     artists: List<ArtistUiModel>,
     isLoading: Boolean,
     errorMessage: String?,
+    hasAnySongs: Boolean,
+    onOpenStreamingSettingsClick: () -> Unit,
+    onOpenLocalSettingsClick: () -> Unit,
     onArtistClick: (ArtistUiModel) -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
@@ -64,7 +67,16 @@ fun ArtistsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    TextMMD(text = "No artists in your library yet")
+                    if (!hasAnySongs) {
+                        LibraryOnboardingEmptyState(
+                            title = "No artists yet",
+                            body = "Connect Apple Music or choose local folders in Settings to start building your library.",
+                            onOpenStreamingSettingsClick = onOpenStreamingSettingsClick,
+                            onOpenLocalSettingsClick = onOpenLocalSettingsClick,
+                        )
+                    } else {
+                        TextMMD(text = "No artists to show yet. Once your songs have artist info, they'll appear here.")
+                    }
                 }
             }
 

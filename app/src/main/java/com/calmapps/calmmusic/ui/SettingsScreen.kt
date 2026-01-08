@@ -19,10 +19,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +37,8 @@ import com.mudita.mmd.components.text.TextMMD
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    selectedTab: Int,
+    onSelectedTabChange: (Int) -> Unit,
     includeLocalMusic: Boolean,
     localFolders: List<String>,
     isAppleMusicAuthenticated: Boolean,
@@ -52,7 +50,6 @@ fun SettingsScreen(
     isRescanningLocal: Boolean,
     localScanProgress: Float,
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
     val tabOptions = listOf("Streaming", "Local")
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -60,7 +57,7 @@ fun SettingsScreen(
             tabOptions.forEachIndexed { index, title ->
                 TabMMD(
                     selected = selectedTab == index,
-                    onClick = { selectedTab = index },
+                    onClick = { onSelectedTabChange(index) },
                     text = {
                         TextMMD(
                             text = title,

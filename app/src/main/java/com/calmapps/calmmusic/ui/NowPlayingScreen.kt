@@ -174,12 +174,12 @@ fun NowPlayingScreen(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = formatDurationMillis(currentPosition),
+                    text = formatDurationMillisNonNull(currentPosition),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = formatDurationMillis(duration),
+                    text = formatDurationMillisNonNull(duration),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -307,12 +307,8 @@ fun NowPlayingScreen(
     }
 }
 
-private fun formatDurationMillis(millis: Long): String {
-    if (millis <= 0L) return "0:00"
-    val totalSeconds = millis / 1000
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return "%d:%02d".format(minutes, seconds)
+private fun formatDurationMillisNonNull(millis: Long): String {
+    return com.calmapps.calmmusic.formatDurationMillis(millis) ?: "0:00"
 }
 
 @Preview(showBackground = true)
