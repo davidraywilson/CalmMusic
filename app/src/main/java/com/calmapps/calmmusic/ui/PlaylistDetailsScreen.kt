@@ -20,44 +20,86 @@ import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.calmapps.calmmusic.CalmMusicViewModel
 import com.mudita.mmd.components.buttons.ButtonMMD
 import com.mudita.mmd.components.buttons.FloatingActionButtonMMD
 import com.mudita.mmd.components.checkbox.CheckboxMMD
 import com.mudita.mmd.components.lazy.LazyColumnMMD
 import com.mudita.mmd.components.text.TextMMD
+import kotlinx.coroutines.launch
 
 @Composable
 fun PlaylistDetailsScreen(
-    songs: List<SongUiModel>,
-    isLoading: Boolean,
-    errorMessage: String?,
-    currentSongId: String?,
+    playlistId: String?,
+    viewModel: CalmMusicViewModel,
     isInEditMode: Boolean,
     selectedSongIds: Set<String>,
     onSongSelectionChange: (songId: String, isSelected: Boolean) -> Unit,
-    onMoveSong: (fromIndex: Int, toIndex: Int) -> Unit,
-    onPlaySongClick: (SongUiModel) -> Unit,
+    onPlaySongClick: (SongUiModel, List<SongUiModel>) -> Unit,
     onAddSongsClick: () -> Unit,
-    onShuffleClick: () -> Unit,
+    onShuffleClick: (List<SongUiModel>) -> Unit,
 ) {
-    // Keep fast, row-local selection state so that checkbox interactions only
-    // recompose this screen. The parent still owns the authoritative selection
-    // set via onSongSelectionChange.
+    // Local State
+    var songs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    val scope = rememberCoroutineScope()
+    val playbackState by viewModel.playbackState.collectAsState()
+    val currentSongId = playbackState.currentSongId
     val selectedState = remember { mutableStateMapOf<String, Boolean>() }
 
-    // When edit mode is turned off from outside this screen, clear local
-    // selection state so checkboxes reset.
+    LaunchedEffect(playlistId) {
+        if (playlistId == null) {
+            isLoading = false
+            return@LaunchedEffect
+        }
+        isLoading = true
+        errorMessage = null
+        try {
+            songs = viewModel.getPlaylistSongs(playlistId)
+        } catch (e: Exception) {
+            errorMessage = e.message ?: "Failed to load playlist songs"
+        } finally {
+            isLoading = false
+        }
+    }
+
     LaunchedEffect(isInEditMode) {
         if (!isInEditMode && selectedState.isNotEmpty()) {
             selectedState.clear()
+        }
+    }
+
+    // Reorder Logic
+    fun moveSong(fromIndex: Int, toIndex: Int) {
+        if (playlistId == null) return
+        val currentList = songs.toMutableList()
+        if (fromIndex in currentList.indices && toIndex in currentList.indices && fromIndex != toIndex) {
+            val item = currentList.removeAt(fromIndex)
+            currentList.add(toIndex, item)
+            songs = currentList
+
+            scope.launch {
+                try {
+                    viewModel.updatePlaylistOrder(playlistId, currentList)
+                } catch (e: Exception) {
+                    errorMessage = "Failed to save order"
+                }
+            }
         }
     }
 
@@ -79,7 +121,7 @@ fun PlaylistDetailsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    TextMMD(text = errorMessage)
+                    TextMMD(text = errorMessage!!)
                 }
             }
 
@@ -129,15 +171,16 @@ fun PlaylistDetailsScreen(
                                 },
                                 canMoveUp = index > 0,
                                 canMoveDown = index < songs.lastIndex,
-                                onMoveUp = { onMoveSong(index, index - 1) },
-                                onMoveDown = { onMoveSong(index, index + 1) },
+                                // Use local function
+                                onMoveUp = { moveSong(index, index - 1) },
+                                onMoveDown = { moveSong(index, index + 1) },
                                 showDivider = !isLast,
                             )
                         } else {
                             SongItem(
                                 song = song,
                                 isCurrentlyPlaying = song.id == currentSongId,
-                                onClick = { onPlaySongClick(song) },
+                                onClick = { onPlaySongClick(song, songs) },
                                 showDivider = !isLast,
                             )
                         }
@@ -155,7 +198,7 @@ fun PlaylistDetailsScreen(
                 horizontalAlignment = Alignment.End,
             ) {
                 FloatingActionButtonMMD(
-                    onClick = onShuffleClick,
+                    onClick = { onShuffleClick(songs) },
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.Shuffle,
@@ -187,8 +230,6 @@ private fun EditablePlaylistSongItem(
     onMoveDown: () -> Unit,
     showDivider: Boolean,
 ) {
-    // Keep selection state fully driven by the parent so that checkbox visuals
-    // always reflect the latest selection set.
     val toggleSelection: () -> Unit = {
         onSelectionChange(!isSelected)
     }

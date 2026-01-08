@@ -59,6 +59,88 @@ class CalmMusicViewModel(
  
     private val _playbackState = MutableStateFlow(PlaybackState())
     val playbackState: StateFlow<PlaybackState> = _playbackState
+
+    suspend fun getAlbumSongs(albumId: String): List<SongUiModel> {
+        return withContext(Dispatchers.IO) {
+            val entities = songDao.getSongsByAlbumId(albumId)
+            entities.map { entity ->
+                SongUiModel(
+                    id = entity.id,
+                    title = entity.title,
+                    artist = entity.artist,
+                    durationText = formatDurationMillis(entity.durationMillis),
+                    durationMillis = entity.durationMillis,
+                    trackNumber = entity.trackNumber,
+                    discNumber = entity.discNumber,
+                    sourceType = entity.sourceType,
+                    audioUri = entity.audioUri,
+                )
+            }
+        }
+    }
+
+    data class ArtistContent(
+        val songs: List<SongUiModel>,
+        val albums: List<AlbumUiModel>
+    )
+
+    suspend fun getArtistContent(artistId: String): ArtistContent {
+        return withContext(Dispatchers.IO) {
+            val songEntities = songDao.getSongsByArtistId(artistId)
+            val albumEntities = albumDao.getAlbumsByArtistId(artistId)
+
+            val songs = songEntities.map { entity ->
+                SongUiModel(
+                    id = entity.id,
+                    title = entity.title,
+                    artist = entity.artist,
+                    durationText = formatDurationMillis(entity.durationMillis),
+                    durationMillis = entity.durationMillis,
+                    trackNumber = entity.trackNumber,
+                    discNumber = entity.discNumber,
+                    sourceType = entity.sourceType,
+                    audioUri = entity.audioUri,
+                )
+            }
+            // ... albums mapping remains the same ...
+            val albums = albumEntities.map { album ->
+                AlbumUiModel(
+                    id = album.id,
+                    title = album.name,
+                    artist = album.artist,
+                    sourceType = album.sourceType,
+                )
+            }
+            ArtistContent(songs, albums)
+        }
+    }
+
+    suspend fun getPlaylistSongs(playlistId: String): List<SongUiModel> {
+        return withContext(Dispatchers.IO) {
+            val entities = playlistDao.getSongsForPlaylist(playlistId)
+            entities.map { entity ->
+                SongUiModel(
+                    id = entity.id,
+                    title = entity.title,
+                    artist = entity.artist,
+                    durationText = formatDurationMillis(entity.durationMillis),
+                    durationMillis = entity.durationMillis,
+                    trackNumber = entity.trackNumber,
+                    discNumber = entity.discNumber,
+                    sourceType = entity.sourceType,
+                    audioUri = entity.audioUri,
+                )
+            }
+        }
+    }
+
+    suspend fun updatePlaylistOrder(playlistId: String, songs: List<SongUiModel>) {
+        withContext(Dispatchers.IO) {
+            songs.forEachIndexed { index, song ->
+                playlistDao.updateTrackPosition(playlistId, song.id, index)
+            }
+        }
+    }
  
     /**
      * Temporary bridge: mirror the composable's playback-related state into

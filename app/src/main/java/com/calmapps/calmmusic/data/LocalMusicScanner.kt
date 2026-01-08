@@ -23,9 +23,6 @@ object LocalMusicScanner {
     ): List<SongEntity> {
         val result = mutableListOf<SongEntity>()
 
-        // Best-effort total count, used only for progress UI. We avoid a full
-        // pre-pass and instead approximate the total based on discovered
-        // folders/files.
         var estimatedTotal = 0
         var processed = 0
         var lastProgressUpdateTime = 0L
@@ -79,6 +76,7 @@ object LocalMusicScanner {
                                     artist = trackArtist, // Keep featured info for track display
                                     album = meta.album,
                                     albumId = albumId,
+                                    discNumber = meta.discNumber, // Pass the extracted disc number
                                     trackNumber = meta.trackNumber,
                                     durationMillis = meta.durationMillis,
                                     sourceType = "LOCAL_FILE",
@@ -89,8 +87,6 @@ object LocalMusicScanner {
 
                             processed++
 
-                            // Throttle progress updates to avoid excessive
-                            // cross-thread chatter when scanning many files.
                             val now = System.currentTimeMillis()
                             if (processed == estimatedTotal || now - lastProgressUpdateTime > 200L) {
                                 lastProgressUpdateTime = now
@@ -117,6 +113,7 @@ object LocalMusicScanner {
         val artist: String?,
         val albumArtist: String?,
         val album: String?,
+        val discNumber: Int?,
         val trackNumber: Int?,
         val durationMillis: Long?,
     )
@@ -129,6 +126,8 @@ object LocalMusicScanner {
             val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
             val albumArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)
             val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+
+            val discStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)
             val trackStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
             val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
 
@@ -137,11 +136,12 @@ object LocalMusicScanner {
                 artist = artist,
                 albumArtist = albumArtist,
                 album = album,
-                trackNumber = trackStr?.substringBefore('/')?.toIntOrNull(),
+                discNumber = discStr?.substringBefore('/')?.trim()?.toIntOrNull(),
+                trackNumber = trackStr?.substringBefore('/')?.trim()?.toIntOrNull(),
                 durationMillis = durationStr?.toLongOrNull(),
             )
         } catch (_: Exception) {
-            LocalMetadata(null, null, null, null, null, null)
+            LocalMetadata(null, null, null, null, null, null, null)
         } finally {
             try { retriever.release() } catch (_: Exception) {}
         }

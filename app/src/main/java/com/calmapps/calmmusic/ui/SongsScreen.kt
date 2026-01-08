@@ -30,6 +30,7 @@ data class SongUiModel(
     val artist: String,
     val durationText: String? = null,
     val durationMillis: Long? = null,
+    val discNumber: Int? = null,
     val trackNumber: Int? = null,
     val sourceType: String = "APPLE_MUSIC",
     val audioUri: String? = null,
