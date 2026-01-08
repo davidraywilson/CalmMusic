@@ -39,6 +39,7 @@ class PlaylistManager(
             sourceType = song.sourceType,
             audioUri = song.audioUri ?: song.id,
             artistId = null,
+            discNumber = null,
         )
         songDao.upsertAll(listOf(entity))
 

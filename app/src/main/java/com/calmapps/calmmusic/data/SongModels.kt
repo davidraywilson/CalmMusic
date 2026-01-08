@@ -30,6 +30,7 @@ data class SongEntity(
     val artist: String,
     val album: String?,
     val albumId: String?,
+    val discNumber: Int?,
     val trackNumber: Int?,
     val durationMillis: Long?,
     val sourceType: String,
@@ -88,7 +89,7 @@ interface SongDao {
     @Query("SELECT * FROM songs WHERE sourceType = :sourceType ORDER BY title")
     suspend fun getSongsBySourceType(sourceType: String): List<SongEntity>
 
-    @Query("SELECT * FROM songs WHERE albumId = :albumId ORDER BY trackNumber, title")
+    @Query("SELECT * FROM songs WHERE albumId = :albumId ORDER BY discNumber, trackNumber, title")
     suspend fun getSongsByAlbumId(albumId: String): List<SongEntity>
 
     @Query("SELECT * FROM songs WHERE artist = :artist ORDER BY albumId, trackNumber, title")

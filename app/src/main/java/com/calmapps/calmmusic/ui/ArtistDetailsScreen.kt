@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -14,18 +13,21 @@ import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.calmapps.calmmusic.CalmMusicViewModel
 import com.mudita.mmd.components.buttons.FloatingActionButtonMMD
-import com.mudita.mmd.components.divider.HorizontalDividerMMD
 import com.mudita.mmd.components.lazy.LazyColumnMMD
 import com.mudita.mmd.components.tabs.PrimaryTabRowMMD
 import com.mudita.mmd.components.tabs.TabMMD
@@ -34,17 +36,44 @@ import com.mudita.mmd.components.text.TextMMD
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ArtistDetailsScreen(
-    songs: List<SongUiModel>,
-    albums: List<AlbumUiModel>,
-    isLoading: Boolean,
-    errorMessage: String?,
-    currentSongId: String?,
-    onPlaySongClick: (SongUiModel) -> Unit,
+    artistId: String?,
+    viewModel: CalmMusicViewModel,
+    onPlaySongClick: (SongUiModel, List<SongUiModel>) -> Unit,
     onAlbumClick: (AlbumUiModel) -> Unit,
-    onShuffleSongsClick: () -> Unit,
+    onShuffleSongsClick: (List<SongUiModel>) -> Unit,
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    // Local state for the data this screen displays
+    var songs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
+    var albums by remember { mutableStateOf<List<AlbumUiModel>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    // UI State: Used rememberSaveable so the tab selection persists when navigating back
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val tabOptions = listOf("Songs", "Albums")
+
+    // Observe global playback state for the "currently playing" indicator
+    val playbackState by viewModel.playbackState.collectAsState()
+    val currentSongId = playbackState.currentSongId
+
+    // Fetch artist content when the screen opens or artistId changes
+    LaunchedEffect(artistId) {
+        if (artistId == null) {
+            isLoading = false
+            return@LaunchedEffect
+        }
+        isLoading = true
+        errorMessage = null
+        try {
+            val content = viewModel.getArtistContent(artistId)
+            songs = content.songs
+            albums = content.albums
+        } catch (e: Exception) {
+            errorMessage = e.message ?: "Failed to load artist"
+        } finally {
+            isLoading = false
+        }
+    }
 
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -66,7 +95,7 @@ fun ArtistDetailsScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         TextMMD(text = "Error loading artist")
-                        TextMMD(text = errorMessage)
+                        TextMMD(text = errorMessage!!)
                     }
                 }
             }
@@ -109,7 +138,7 @@ fun ArtistDetailsScreen(
                                     SongItem(
                                         song = song,
                                         isCurrentlyPlaying = song.id == currentSongId,
-                                        onClick = { onPlaySongClick(song) },
+                                        onClick = { onPlaySongClick(song, songs) },
                                         showDivider = song != songs.lastOrNull(),
                                     )
                                 }
@@ -163,7 +192,7 @@ fun ArtistDetailsScreen(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(16.dp),
-                onClick = onShuffleSongsClick,
+                onClick = { onShuffleSongsClick(songs) },
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Shuffle,
