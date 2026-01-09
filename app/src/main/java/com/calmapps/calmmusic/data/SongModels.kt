@@ -37,6 +37,8 @@ data class SongEntity(
     val audioUri: String,
     /** Optional reference to a canonical artist row. */
     val artistId: String? = null,
+    /** Optional release year for this song/album, when available. */
+    val releaseYear: Int? = null,
 )
 
 @Entity(

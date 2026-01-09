@@ -970,12 +970,13 @@ fun CalmMusic(app: CalmMusic) {
                             artist = artistName,
                             album = albumName,
                             albumId = albumId,
+                            discNumber = null,
                             trackNumber = null,
                             durationMillis = song.durationMillis,
                             sourceType = "APPLE_MUSIC",
                             audioUri = song.id,
                             artistId = artistId,
-                            discNumber = null
+                            releaseYear = song.releaseYear,
                         )
                     }
 
@@ -1035,12 +1036,27 @@ fun CalmMusic(app: CalmMusic) {
                         audioUri = entity.audioUri,
                     )
                 }
+                // Derive a best-effort release year per album from its songs, if available.
+                val albumIdToYear: Map<String, Int?> = allSongs
+                    .mapNotNull { entity ->
+                        val albumId = entity.albumId ?: return@mapNotNull null
+                        albumId to entity.releaseYear
+                    }
+                    .groupBy(
+                        keySelector = { it.first },
+                        valueTransform = { it.second },
+                    )
+                    .mapValues { (_, years) ->
+                        years.filterNotNull().maxOrNull()
+                    }
+
                 libraryAlbums = allAlbums.map { album ->
                     AlbumUiModel(
                         id = album.id,
                         title = album.name,
                         artist = album.artist,
                         sourceType = album.sourceType,
+                        releaseYear = albumIdToYear[album.id],
                     )
                 }
                 libraryArtists = allArtistsWithCounts.map { artist ->
@@ -1081,12 +1097,27 @@ fun CalmMusic(app: CalmMusic) {
                     audioUri = entity.audioUri,
                 )
             }
+            // Derive a best-effort release year per album from its songs, if available.
+            val albumIdToYear: Map<String, Int?> = allSongs
+                .mapNotNull { entity ->
+                    val albumId = entity.albumId ?: return@mapNotNull null
+                    albumId to entity.releaseYear
+                }
+                .groupBy(
+                    keySelector = { it.first },
+                    valueTransform = { it.second },
+                )
+                .mapValues { (_, years) ->
+                    years.filterNotNull().maxOrNull()
+                }
+
             libraryAlbums = allAlbums.map { album ->
                 AlbumUiModel(
                     id = album.id,
                     title = album.name,
                     artist = album.artist,
                     sourceType = album.sourceType,
+                    releaseYear = albumIdToYear[album.id],
                 )
             }
             libraryArtists = allArtistsWithCounts.map { artist ->
@@ -1228,12 +1259,13 @@ fun CalmMusic(app: CalmMusic) {
                                                         artist = song.artist,
                                                         album = null,
                                                         albumId = null,
+                                                        discNumber = null,
                                                         trackNumber = song.trackNumber,
                                                         durationMillis = song.durationMillis,
                                                         sourceType = song.sourceType,
                                                         audioUri = song.audioUri ?: song.id,
                                                         artistId = null,
-                                                        discNumber = null,
+                                                        releaseYear = null,
                                                     )
                                                 }
                                                 songDao.upsertAll(songEntities)
@@ -1521,12 +1553,13 @@ fun CalmMusic(app: CalmMusic) {
                                                     artist = songToAdd.artist,
                                                     album = null,
                                                     albumId = null,
+                                                    discNumber = null,
                                                     trackNumber = songToAdd.trackNumber,
                                                     durationMillis = songToAdd.durationMillis,
                                                     sourceType = songToAdd.sourceType,
                                                     audioUri = songToAdd.audioUri ?: songToAdd.id,
                                                     artistId = null,
-                                                    discNumber = null,
+                                                    releaseYear = null,
                                                 )
                                                 songDao.upsertAll(listOf(songEntity))
                                                 val existing = playlistDao.getSongsForPlaylist(resolvedPlaylistId)
