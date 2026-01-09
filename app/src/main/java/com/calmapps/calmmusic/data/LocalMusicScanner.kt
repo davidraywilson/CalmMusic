@@ -124,10 +124,19 @@ object LocalMusicScanner {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(context, uri)
-            val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-            val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
-            val albumArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)
-            val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+
+            // Raw strings from metadata may contain mojibake when UTF-8 text is
+            // decoded as ISO-8859-1/Windows-1252. We normalize and attempt to
+            // repair the most common cases (e.g., "Iâ€™ve" -> "Ive").
+            val rawTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+            val rawArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+            val rawAlbumArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)
+            val rawAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+
+            val title = rawTitle.normalizeTagString()
+            val artist = rawArtist.normalizeTagString()
+            val albumArtist = rawAlbumArtist.normalizeTagString()
+            val album = rawAlbum.normalizeTagString()
 
             val discStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)
             val trackStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
@@ -150,4 +159,38 @@ object LocalMusicScanner {
             try { retriever.release() } catch (_: Exception) {}
         }
     }
+}
+
+// Normalize and repair common encoding issues in tag strings.
+private fun String?.normalizeTagString(): String? {
+    if (this == null) return null
+    val trimmed = trim()
+    if (trimmed.isEmpty()) return null
+    return trimmed.fixCommonTagMojibake()
+}
+
+/**
+ * Attempt to fix common mojibake sequences in ID3 tags without re-decoding
+ * bytes. We only replace known bad sequences so valid text is left alone.
+ */
+private fun String.fixCommonTagMojibake(): String {
+    var fixed = this
+
+    // Map of common UTF-8-as-Latin1 sequences to their intended characters.
+    val replacements = mapOf(
+        "â€™" to "’", // right single quotation mark
+        "â€˜" to "‘", // left single quotation mark
+        "â€œ" to "“", // left double quotation mark
+        "â€" to "”", // right double quotation mark
+        "â€“" to "–", // en dash
+        "â€”" to "—", // em dash
+    )
+
+    for ((bad, good) in replacements) {
+        if (fixed.contains(bad)) {
+            fixed = fixed.replace(bad, good)
+        }
+    }
+
+    return fixed
 }
