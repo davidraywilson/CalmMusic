@@ -3,7 +3,9 @@ package com.calmapps.calmmusic
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -66,6 +68,7 @@ import com.calmapps.calmmusic.data.CalmMusicDatabase
 import com.calmapps.calmmusic.data.PlaylistEntity
 import com.calmapps.calmmusic.data.PlaylistTrackEntity
 import com.calmapps.calmmusic.data.SongEntity
+import com.calmapps.calmmusic.overlay.SystemOverlayService
 import com.calmapps.calmmusic.playback.PlaybackCoordinator
 import com.calmapps.calmmusic.ui.AlbumDetailsScreen
 import com.calmapps.calmmusic.ui.AlbumUiModel
@@ -120,6 +123,20 @@ class MainActivity : ComponentActivity() {
             ThemeMMD {
                 CalmMusic(app)
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        checkOverlayPermission()
+    }
+
+    private fun checkOverlayPermission() {
+        if (!Settings.canDrawOverlays(this)) {
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+            startActivity(intent)
+        } else {
+            startService(Intent(this, SystemOverlayService::class.java))
         }
     }
 
@@ -835,6 +852,22 @@ fun CalmMusic(app: CalmMusic) {
             positionMs = nowPlayingPositionMs,
             durationMs = nowPlayingDurationMs,
         )
+
+        // ----------------------------------------------------------------
+        // NEW CODE: Update Overlay State Manager
+        // ----------------------------------------------------------------
+        app.playbackStateManager.updateQueue(playbackQueue)
+        if (nowPlayingSong != null) {
+            app.playbackStateManager.updateState(
+                songId = nowPlayingSong!!.id,
+                title = nowPlayingSong!!.title,
+                artist = nowPlayingSong!!.artist,
+                isPlaying = isPlaybackPlaying,
+                sourceType = nowPlayingSong!!.sourceType
+            )
+        } else {
+            app.playbackStateManager.clearState()
+        }
     }
 
     LaunchedEffect(Unit) {

@@ -42,21 +42,17 @@ fun ArtistDetailsScreen(
     onAlbumClick: (AlbumUiModel) -> Unit,
     onShuffleSongsClick: (List<SongUiModel>) -> Unit,
 ) {
-    // Local state for the data this screen displays
     var songs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
     var albums by remember { mutableStateOf<List<AlbumUiModel>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // UI State: Used rememberSaveable so the tab selection persists when navigating back
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val tabOptions = listOf("Songs", "Albums")
 
-    // Observe global playback state for the "currently playing" indicator
     val playbackState by viewModel.playbackState.collectAsState()
     val currentSongId = playbackState.currentSongId
 
-    // Fetch artist content when the screen opens or artistId changes
     LaunchedEffect(artistId) {
         if (artistId == null) {
             isLoading = false

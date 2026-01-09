@@ -14,6 +14,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.calmapps.calmmusic.data.PlaybackStateManager
 
 /**
  * Media3-based playback service for local music files.
@@ -58,6 +59,25 @@ class PlaybackService : MediaSessionService() {
             override fun onPlayerError(error: PlaybackException) {
                 errorCallback?.invoke(error)
                 super.onPlayerError(error)
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                super.onIsPlayingChanged(isPlaying)
+                (application as? CalmMusic)?.playbackStateManager?.updatePlaybackStatus(isPlaying)
+            }
+
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                super.onMediaItemTransition(mediaItem, reason)
+                val meta = mediaItem?.mediaMetadata
+                if (meta != null) {
+                    (application as? CalmMusic)?.playbackStateManager?.updateState(
+                        songId = mediaItem.mediaId,
+                        title = meta.title?.toString() ?: "Unknown Title",
+                        artist = meta.artist?.toString() ?: "Unknown Artist",
+                        isPlaying = player.isPlaying,
+                        sourceType = "LOCAL_FILE"
+                    )
+                }
             }
         })
 

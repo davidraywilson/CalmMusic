@@ -1,29 +1,31 @@
 package com.calmapps.calmmusic
 
 import android.app.Application
-import com.apple.android.sdk.authentication.AuthenticationFactory
-import com.apple.android.sdk.authentication.AuthenticationManager
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.apple.android.music.playback.controller.MediaPlayerController
 import com.apple.android.music.playback.controller.MediaPlayerControllerFactory
+import com.apple.android.sdk.authentication.AuthenticationFactory
+import com.apple.android.sdk.authentication.AuthenticationManager
 import com.calmapps.calmmusic.data.CalmMusicSettingsManager
+import com.calmapps.calmmusic.data.PlaybackStateManager
 
-class CalmMusic : Application() {
+class CalmMusic : Application(), DefaultLifecycleObserver {
 
     companion object {
         init {
             try {
                 System.loadLibrary("appleMusicSDK")
             } catch (e: UnsatisfiedLinkError) {
-                // In case the native library is missing or fails to load, fail fast in logs.
                 e.printStackTrace()
             }
         }
     }
 
     val tokenProvider: SimpleTokenProvider by lazy {
-        // In a real app, developer tokens should come from a backend service.
         SimpleTokenProvider(
-            initialDeveloperToken = "", // TODO: fetch developer token from your backend
+            initialDeveloperToken = "", // TODO: Ensure your developer token is set here
             initialMusicUserToken = null,
             context = this,
         )
@@ -52,13 +54,30 @@ class CalmMusic : Application() {
         AppleMusicApiClientImpl.create(tokenProvider = tokenProvider)
     }
 
+    val playbackStateManager: PlaybackStateManager by lazy {
+        PlaybackStateManager()
+    }
+
     lateinit var settingsManager: CalmMusicSettingsManager
         private set
 
     override fun onCreate() {
-        super.onCreate()
+        super<Application>.onCreate()
 
-        // Settings are lightweight; initialize eagerly so flows are ready.
         settingsManager = CalmMusicSettingsManager(this)
+        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+        appleMusicPlayer.setOnCurrentItemChangedListener { index ->
+            if (index != null && index >= 0) {
+                playbackStateManager.updateFromQueueIndex(index)
+            }
+        }
+    }
+
+    override fun onStart(owner: LifecycleOwner) {
+        playbackStateManager.setAppForegroundState(true)
+    }
+
+    override fun onStop(owner: LifecycleOwner) {
+        playbackStateManager.setAppForegroundState(false)
     }
 }
