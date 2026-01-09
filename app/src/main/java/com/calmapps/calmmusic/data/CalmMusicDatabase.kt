@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PlaylistEntity::class,
         PlaylistTrackEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 abstract class CalmMusicDatabase : RoomDatabase() {
@@ -35,6 +35,12 @@ abstract class CalmMusicDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE songs ADD COLUMN releaseYear INTEGER")
+            }
+        }
+
         fun getDatabase(context: Context): CalmMusicDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -42,7 +48,7 @@ abstract class CalmMusicDatabase : RoomDatabase() {
                     CalmMusicDatabase::class.java,
                     "calmmusic.db",
                 )
-                    .addMigrations(MIGRATION_6_7) // Register the migration
+                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

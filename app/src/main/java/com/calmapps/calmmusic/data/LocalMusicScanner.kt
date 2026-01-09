@@ -82,6 +82,7 @@ object LocalMusicScanner {
                                     sourceType = "LOCAL_FILE",
                                     audioUri = uri.toString(),
                                     artistId = artistId, // Group under primary artist
+                                    releaseYear = meta.year,
                                 ),
                             )
 
@@ -116,6 +117,7 @@ object LocalMusicScanner {
         val discNumber: Int?,
         val trackNumber: Int?,
         val durationMillis: Long?,
+        val year: Int?,
     )
 
     private fun extractMetadata(context: Context, uri: Uri): LocalMetadata {
@@ -130,6 +132,7 @@ object LocalMusicScanner {
             val discStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)
             val trackStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
             val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            val yearStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)
 
             LocalMetadata(
                 title = title,
@@ -139,9 +142,10 @@ object LocalMusicScanner {
                 discNumber = discStr?.substringBefore('/')?.trim()?.toIntOrNull(),
                 trackNumber = trackStr?.substringBefore('/')?.trim()?.toIntOrNull(),
                 durationMillis = durationStr?.toLongOrNull(),
+                year = yearStr?.take(4)?.trim()?.toIntOrNull(),
             )
         } catch (_: Exception) {
-            LocalMetadata(null, null, null, null, null, null, null)
+            LocalMetadata(null, null, null, null, null, null, null, null)
         } finally {
             try { retriever.release() } catch (_: Exception) {}
         }

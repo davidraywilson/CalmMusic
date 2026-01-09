@@ -28,6 +28,8 @@ data class AlbumUiModel(
     val title: String,
     val artist: String?,
     val sourceType: String,
+    /** Optional release year for display when available. */
+    val releaseYear: Int? = null,
 )
 
 @Composable
@@ -132,15 +134,24 @@ fun AlbumItem(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (!album.artist.isNullOrBlank()) {
+            if (!album.artist.isNullOrBlank() || album.releaseYear != null) {
                 Spacer(modifier = Modifier.height(4.dp))
-                TextMMD(
-                    text = album.artist,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Normal,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                val subtitle = when {
+                    !album.artist.isNullOrBlank() && album.releaseYear != null ->
+                        "${album.artist} • ${album.releaseYear}"
+                    !album.artist.isNullOrBlank() -> album.artist
+                    album.releaseYear != null -> album.releaseYear.toString()
+                    else -> ""
+                }
+                if (subtitle.isNotBlank()) {
+                    TextMMD(
+                        text = subtitle,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
 

@@ -11,6 +11,8 @@ data class AppleMusicSong(
     val artworkUrl: String?,
     val durationMillis: Long?,
     val albumName: String?,
+    /** Optional release year for the track/album, when available. */
+    val releaseYear: Int?,
 )
 
 data class AppleMusicPlaylist(

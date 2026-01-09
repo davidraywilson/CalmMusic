@@ -216,12 +216,27 @@ class LibraryRepository(
                     audioUri = entity.audioUri,
                 )
             }
+            // Derive a best-effort release year per album from its songs, if available.
+            val albumIdToYear: Map<String, Int?> = allSongs
+                .mapNotNull { entity ->
+                    val albumId = entity.albumId ?: return@mapNotNull null
+                    albumId to entity.releaseYear
+                }
+                .groupBy(
+                    keySelector = { it.first },
+                    valueTransform = { it.second },
+                )
+                .mapValues { (_, years) ->
+                    years.filterNotNull().maxOrNull()
+                }
+
             val albumModels = allAlbums.map { album ->
                 AlbumUiModel(
                     id = album.id,
                     title = album.name,
                     artist = album.artist,
                     sourceType = album.sourceType,
+                    releaseYear = albumIdToYear[album.id],
                 )
             }
             val artistModels = allArtistsWithCounts.map { artist ->

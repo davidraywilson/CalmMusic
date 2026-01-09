@@ -227,6 +227,7 @@ private data class SongAttributes(
     val artwork: Artwork? = null,
     val durationInMillis: Long? = null,
     val albumName: String? = null,
+    val releaseDate: String? = null,
 )
 
 private data class PlaylistAttributes(
@@ -271,6 +272,7 @@ private fun SongResource.toDomainSong(): AppleMusicSong =
         artworkUrl = attributes?.artwork?.url,
         durationMillis = attributes?.durationInMillis,
         albumName = attributes?.albumName,
+        releaseYear = attributes?.releaseDate?.take(4)?.toIntOrNull(),
     )
 
 private fun PlaylistResource.toDomainPlaylist(): AppleMusicPlaylist =
@@ -290,4 +292,5 @@ private fun SongAttributes.toDomainSong(id: String): AppleMusicSong =
         artworkUrl = artwork?.url,
         durationMillis = durationInMillis,
         albumName = albumName,
+        releaseYear = releaseDate?.take(4)?.toIntOrNull(),
     )
