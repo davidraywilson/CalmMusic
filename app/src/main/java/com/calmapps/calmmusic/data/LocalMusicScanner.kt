@@ -125,9 +125,6 @@ object LocalMusicScanner {
         return try {
             retriever.setDataSource(context, uri)
 
-            // Raw strings from metadata may contain mojibake when UTF-8 text is
-            // decoded as ISO-8859-1/Windows-1252. We normalize and attempt to
-            // repair the most common cases (e.g., "Iâ€™ve" -> "Ive").
             val rawTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
             val rawArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
             val rawAlbumArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)
@@ -161,7 +158,6 @@ object LocalMusicScanner {
     }
 }
 
-// Normalize and repair common encoding issues in tag strings.
 private fun String?.normalizeTagString(): String? {
     if (this == null) return null
     val trimmed = trim()
