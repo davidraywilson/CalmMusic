@@ -214,6 +214,7 @@ class LibraryRepository(
                     trackNumber = entity.trackNumber,
                     sourceType = entity.sourceType,
                     audioUri = entity.audioUri,
+                    album = entity.album,
                 )
             }
             // Derive a best-effort release year per album from its songs, if available.

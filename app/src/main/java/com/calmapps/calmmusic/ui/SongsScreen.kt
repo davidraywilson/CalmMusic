@@ -34,6 +34,7 @@ data class SongUiModel(
     val trackNumber: Int? = null,
     val sourceType: String = "APPLE_MUSIC",
     val audioUri: String? = null,
+    val album: String? = null,
 )
 
 @Composable

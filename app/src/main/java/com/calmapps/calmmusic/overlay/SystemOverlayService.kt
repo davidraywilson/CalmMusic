@@ -189,10 +189,10 @@ class SystemOverlayService : Service() {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = state.title.ifBlank { "Not Playing" },
+                        text = state.title.ifBlank{ "Not Playing" },
                         color = Color.White,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,

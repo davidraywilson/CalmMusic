@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -48,6 +49,7 @@ enum class RepeatMode {
 fun NowPlayingScreen(
     title: String,
     artist: String,
+    album: String? = null,
     isPlaying: Boolean,
     isLoading: Boolean,
     currentPosition: Long,
@@ -103,17 +105,15 @@ fun NowPlayingScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
+                .weight(1f)
+                .padding(horizontal = 4.dp),
+            verticalArrangement = Arrangement.Bottom,
         ) {
             Text(
                 text = title,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                // max lines 3 unless isVideo then 1
-                maxLines = if (isVideo) 1 else 3,
+                fontSize = if (isVideo) 24.sp else 42.sp,
+                fontWeight = FontWeight.Black,
+                maxLines = if (isVideo) 1 else 2,
                 overflow = TextOverflow.Ellipsis
             )
 
@@ -123,9 +123,23 @@ fun NowPlayingScreen(
                 Text(
                     text = artist,
                     fontSize = 20.sp,
-                    fontWeight = FontWeight.Normal,
-                    textAlign = TextAlign.Center,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+
+                val hasAlbum = !album.isNullOrBlank()
+                if (hasAlbum) {
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = album!!,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
 
             if (isVideo && player != null) {
@@ -151,8 +165,7 @@ fun NowPlayingScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         Column(
-            modifier = Modifier
-                .fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth(),
         ) {
             SliderMMD(
                 modifier = Modifier.fillMaxWidth(),
@@ -249,8 +262,7 @@ fun NowPlayingScreen(
 
         // Bottom row for secondary actions (e.g. shuffle, repeat, add to playlist)
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
+            modifier = Modifier.fillMaxWidth()
         ) {
             IconButton(onClick = onAddToPlaylistClick) {
                 Icon(
@@ -317,6 +329,7 @@ private fun NowPlayingScreenPreview() {
     NowPlayingScreen(
         title = "Song Title",
         artist = "Artist Name",
+        album = "Album Name",
         isPlaying = false,
         isLoading = false,
         currentPosition = 0L,
