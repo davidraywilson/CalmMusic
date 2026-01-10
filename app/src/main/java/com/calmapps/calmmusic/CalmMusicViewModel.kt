@@ -74,6 +74,7 @@ class CalmMusicViewModel(
                     discNumber = entity.discNumber,
                     sourceType = entity.sourceType,
                     audioUri = entity.audioUri,
+                    album = entity.album,
                 )
             }
         }
@@ -100,6 +101,7 @@ class CalmMusicViewModel(
                     discNumber = entity.discNumber,
                     sourceType = entity.sourceType,
                     audioUri = entity.audioUri,
+                    album = entity.album,
                 )
             }
 
@@ -152,6 +154,7 @@ class CalmMusicViewModel(
                     discNumber = entity.discNumber,
                     sourceType = entity.sourceType,
                     audioUri = entity.audioUri,
+                    album = entity.album,
                 )
             }
         }
@@ -234,6 +237,7 @@ class CalmMusicViewModel(
                     trackNumber = entity.trackNumber,
                     sourceType = entity.sourceType,
                     audioUri = entity.audioUri,
+                    album = entity.album,
                 )
             }
             // Derive a best-effort release year per album from its songs, if available.

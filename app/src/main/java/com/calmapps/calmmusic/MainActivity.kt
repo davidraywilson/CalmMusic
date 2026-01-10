@@ -295,6 +295,7 @@ fun CalmMusic(app: CalmMusic) {
                         trackNumber = null,
                         sourceType = "APPLE_MUSIC",
                         audioUri = it.id,
+                        album = it.albumName,
                     )
                 }
                 searchPlaylists = result.playlists.map {
@@ -1034,6 +1035,7 @@ fun CalmMusic(app: CalmMusic) {
                         trackNumber = entity.trackNumber,
                         sourceType = entity.sourceType,
                         audioUri = entity.audioUri,
+                        album = entity.album,
                     )
                 }
                 // Derive a best-effort release year per album from its songs, if available.
@@ -1095,6 +1097,7 @@ fun CalmMusic(app: CalmMusic) {
                     trackNumber = entity.trackNumber,
                     sourceType = entity.sourceType,
                     audioUri = entity.audioUri,
+                    album = entity.album,
                 )
             }
             // Derive a best-effort release year per album from its songs, if available.
@@ -1722,6 +1725,7 @@ fun CalmMusic(app: CalmMusic) {
             NowPlayingScreen(
                 title = song.title,
                 artist = song.artist.ifBlank { if (song.sourceType == "LOCAL_FILE") "Local file" else "" },
+                album = song.album,
                 isPlaying = isPlaybackPlaying,
                 isLoading = false,
                 currentPosition = nowPlayingPositionMs.coerceAtMost(displayDuration),
