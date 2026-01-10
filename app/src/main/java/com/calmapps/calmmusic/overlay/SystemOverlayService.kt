@@ -55,6 +55,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 class SystemOverlayService : Service() {
 
@@ -66,11 +67,22 @@ class SystemOverlayService : Service() {
     private var originalX: Int = 0
     private var originalY: Int = 0
     private lateinit var playbackStateManager: PlaybackStateManager
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         playbackStateManager = (application as CalmMusic).playbackStateManager
+
+        serviceScope.launch {
+            playbackStateManager.state.collect { state ->
+                if (state.isAppInForeground) {
+                    removeOverlayView()
+                } else if (state.songId != null && overlayView == null) {
+                    showOverlay()
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -216,16 +228,8 @@ class SystemOverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        overlayView?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (_: Exception) {
-                // Ignore
-            }
-        }
-        overlayView = null
-        overlayLayoutParams = null
-        hideCloseTarget()
+        serviceScope.cancel()
+        removeOverlayView()
     }
 
     private fun moveOverlayBy(dx: Float, dy: Float) {
@@ -267,11 +271,9 @@ class SystemOverlayService : Service() {
 
         val shouldClose = params.y >= thresholdY
         if (shouldClose) {
-            // Dragged into the close zone: stop playback and dismiss overlay
             stopPlayback()
             dismissOverlay()
         } else {
-            // Not in close zone: snap back and hide the X
             resetOverlayPosition()
             hideCloseTarget()
         }
@@ -358,7 +360,12 @@ class SystemOverlayService : Service() {
         closeTargetLayoutParams = null
     }
 
-    private fun dismissOverlay() {
+    /**
+     * Remove the overlay view from the window, but keep the service alive.
+     * Used when the app comes to the foreground so the overlay disappears
+     * while still allowing it to re-appear when the app goes to background.
+     */
+    private fun removeOverlayView() {
         overlayView?.let { view ->
             try {
                 windowManager.removeView(view)
@@ -369,20 +376,26 @@ class SystemOverlayService : Service() {
         overlayView = null
         overlayLayoutParams = null
         hideCloseTarget()
+    }
+
+    /**
+     * Fully dismiss the overlay and stop the service. Used for explicit
+     * user actions like tapping the pill or dragging it into the close zone.
+     */
+    private fun dismissOverlay() {
+        removeOverlayView()
         stopSelf()
     }
 
     private fun stopPlayback() {
         val app = application as? CalmMusic
 
-        // Stop Apple Music playback if active
         try {
             app?.appleMusicPlayer?.pause()
         } catch (_: Exception) {
             // Ignore
         }
 
-        // Stop local playback via MediaController bound to PlaybackService's MediaSession
         try {
             val context = this
             val sessionToken = SessionToken(
@@ -394,9 +407,6 @@ class SystemOverlayService : Service() {
                 try {
                     val controller = future.get()
                     controller.pause()
-                    // Do NOT call controller.release() here; it can throw if the
-                    // service connection is already unbound. The controller will
-                    // be cleaned up when the process dies or GC runs.
                 } catch (_: Exception) {
                     // Ignore
                 }

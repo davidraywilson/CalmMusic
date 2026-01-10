@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -34,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -57,6 +59,9 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.navigation.NavDestination
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -126,8 +131,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Mark the app as foreground whenever MainActivity becomes visible
+        app.playbackStateManager.setAppForegroundState(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Mark the app as background when MainActivity is no longer visible
+        app.playbackStateManager.setAppForegroundState(false)
+    }
+
     override fun onResume() {
         super.onResume()
+        // Ensure foreground state is correct when activity is resumed
+        app.playbackStateManager.setAppForegroundState(true)
         checkOverlayPermission()
     }
 
@@ -1144,7 +1163,8 @@ fun CalmMusic(app: CalmMusic) {
     }
 
     val openStreamingSettings: () -> Unit = {
-        settingsSelectedTab = 0
+        // General = 0, Streaming = 1, Local = 2
+        settingsSelectedTab = 1
         navController.navigate(Screen.Settings.route) {
             popUpTo(navController.graph.startDestinationId) { saveState = true }
             launchSingleTop = true
@@ -1153,7 +1173,7 @@ fun CalmMusic(app: CalmMusic) {
     }
 
     val openLocalSettings: () -> Unit = {
-        settingsSelectedTab = 1
+        settingsSelectedTab = 2
         navController.navigate(Screen.Settings.route) {
             popUpTo(navController.graph.startDestinationId) { saveState = true }
             launchSingleTop = true
@@ -1652,6 +1672,32 @@ fun CalmMusic(app: CalmMusic) {
                 }
                 composable(Screen.Settings.route) {
                     val context = LocalContext.current
+                    val lifecycleOwner = LocalLifecycleOwner.current
+
+                    var hasBatteryOptimizationExemption by remember { mutableStateOf(false) }
+
+                    fun updateBatteryOptimizationState() {
+                        val powerManager = context.getSystemService(PowerManager::class.java)
+                        hasBatteryOptimizationExemption =
+                            powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true
+                    }
+
+                    LaunchedEffect(Unit) {
+                        updateBatteryOptimizationState()
+                    }
+
+                    DisposableEffect(lifecycleOwner) {
+                        val observer = LifecycleEventObserver { _, event ->
+                            if (event == Lifecycle.Event.ON_RESUME) {
+                                updateBatteryOptimizationState()
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose {
+                            lifecycleOwner.lifecycle.removeObserver(observer)
+                        }
+                    }
+
                     val folderPickerLauncher = rememberLauncherForActivityResult(
                         contract = ActivityResultContracts.OpenDocumentTree(),
                     ) { uri ->
@@ -1666,15 +1712,28 @@ fun CalmMusic(app: CalmMusic) {
                         }
                     }
 
+                    fun requestBatteryOptimizationExemption() {
+                        val powerManager = context.getSystemService(PowerManager::class.java)
+                        if (powerManager != null && !powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
+                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                        }
+                    }
+
                     SettingsScreen(
                         selectedTab = settingsSelectedTab,
                         onSelectedTabChange = { settingsSelectedTab = it },
                         includeLocalMusic = includeLocalMusic,
                         localFolders = localMusicFolders.toList(),
                         isAppleMusicAuthenticated = isAuthenticated,
+                        hasBatteryOptimizationExemption = hasBatteryOptimizationExemption,
                         onConnectAppleMusicClick = {
                             activity?.let { startAppleMusicAuth(it) }
                         },
+                        onRequestBatteryOptimizationExemption = { requestBatteryOptimizationExemption() },
                         onIncludeLocalMusicChange = { enabled ->
                             settingsManager.setIncludeLocalMusic(enabled)
                         },
