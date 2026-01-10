@@ -128,7 +128,7 @@ interface AlbumDao {
 
 @Dao
 interface ArtistDao {
-    @Query("SELECT * FROM artists ORDER BY name")
+    @Query("SELECT * FROM artists ORDER BY name COLLATE NOCASE")
     suspend fun getAllArtists(): List<ArtistEntity>
 
     @Query(
@@ -139,7 +139,7 @@ interface ArtistDao {
             "LEFT JOIN songs s ON s.artistId = a.id " +
             "LEFT JOIN albums al ON al.artistId = a.id " +
             "GROUP BY a.id " +
-            "ORDER BY a.name",
+            "ORDER BY a.name COLLATE NOCASE",
     )
     suspend fun getAllArtistsWithCounts(): List<ArtistWithCounts>
 
