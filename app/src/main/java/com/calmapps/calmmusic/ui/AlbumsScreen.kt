@@ -97,12 +97,17 @@ fun AlbumsScreen(
             }
 
             else -> {
+                val lastAlbumId = albums.lastOrNull()?.id
                 LazyColumnMMD(contentPadding = PaddingValues(16.dp)) {
-                    items(albums) { album ->
+                    items(
+                        items = albums,
+                        key = { it.id },
+                    ) { album ->
+                        val isLast = album.id == lastAlbumId
                         AlbumItem(
                             album = album,
                             onClick = { onAlbumClick(album) },
-                            showDivider = album != albums.lastOrNull(),
+                            showDivider = !isLast,
                         )
                     }
                 }

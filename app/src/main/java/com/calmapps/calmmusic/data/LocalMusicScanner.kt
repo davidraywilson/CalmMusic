@@ -19,6 +19,7 @@ object LocalMusicScanner {
     suspend fun scanFolders(
         context: Context,
         folderUris: Set<String>,
+        existingSongsByUri: Map<String, SongEntity> = emptyMap(),
         onProgress: suspend (processed: Int, total: Int) -> Unit = { _, _ -> },
     ): List<SongEntity> {
         val result = mutableListOf<SongEntity>()
@@ -44,11 +45,33 @@ object LocalMusicScanner {
                         val name = child.name ?: continue
                         val ext = name.substringAfterLast('.', "").lowercase()
                         if (ext in AUDIO_EXTENSIONS) {
+                            val uri = child.uri
+                            val uriString = uri.toString()
+                            val lastModified = child.lastModified()
+                            val fileSize = child.length()
+
                             // Increment our best-effort total as we discover
                             // new matching files.
                             estimatedTotal++
 
-                            val uri = child.uri
+                            val existing = existingSongsByUri[uriString]
+                            if (existing != null &&
+                                existing.sourceType == "LOCAL_FILE" &&
+                                existing.localLastModifiedMillis == lastModified &&
+                                existing.localFileSizeBytes == fileSize
+                            ) {
+                                result.add(existing)
+                                processed++
+
+                                val now = System.currentTimeMillis()
+                                if (processed == estimatedTotal || now - lastProgressUpdateTime > 200L) {
+                                    lastProgressUpdateTime = now
+                                    onProgress(processed, estimatedTotal)
+                                }
+
+                                continue
+                            }
+
                             val meta = extractMetadata(context, uri)
                             val titleFromName = name.substringBeforeLast('.', name)
 
@@ -71,7 +94,7 @@ object LocalMusicScanner {
 
                             result.add(
                                 SongEntity(
-                                    id = uri.toString(),
+                                    id = uriString,
                                     title = meta.title ?: titleFromName,
                                     artist = trackArtist, // Keep featured info for track display
                                     album = meta.album,
@@ -80,9 +103,11 @@ object LocalMusicScanner {
                                     trackNumber = meta.trackNumber,
                                     durationMillis = meta.durationMillis,
                                     sourceType = "LOCAL_FILE",
-                                    audioUri = uri.toString(),
+                                    audioUri = uriString,
                                     artistId = artistId, // Group under primary artist
                                     releaseYear = meta.year,
+                                    localLastModifiedMillis = lastModified,
+                                    localFileSizeBytes = fileSize,
                                 ),
                             )
 

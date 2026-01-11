@@ -5,9 +5,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.calmapps.calmmusic.data.AlbumEntity
+import com.calmapps.calmmusic.data.ArtistEntity
 import com.calmapps.calmmusic.data.CalmMusicDatabase
 import com.calmapps.calmmusic.data.LibraryRepository
 import com.calmapps.calmmusic.data.PlaylistManager
+import com.calmapps.calmmusic.data.SongEntity
 import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.ArtistUiModel
 import com.calmapps.calmmusic.ui.PlaylistUiModel
@@ -38,6 +41,9 @@ class CalmMusicViewModel(
     private val playlistDao by lazy { database.playlistDao() }
     private val libraryRepository: LibraryRepository by lazy { LibraryRepository(app) }
     private val playlistManager: PlaylistManager by lazy { PlaylistManager(songDao, playlistDao) }
+
+    private val settingsManager
+        get() = app.settingsManager
 
     private val _librarySongs = MutableStateFlow<List<SongUiModel>>(emptyList())
     val librarySongs: StateFlow<List<SongUiModel>> = _librarySongs
@@ -205,7 +211,227 @@ class CalmMusicViewModel(
         onScanProgress: (Float) -> Unit,
         onIngestProgress: (Float) -> Unit,
     ): LibraryRepository.LocalResyncResult {
-        return libraryRepository.resyncLocalLibrary(includeLocal, folders, onScanProgress, onIngestProgress)
+        val result = libraryRepository.resyncLocalLibrary(includeLocal, folders, onScanProgress, onIngestProgress)
+        updateLibrary(
+            songs = result.songs,
+            albums = result.albums,
+            artists = result.artists,
+        )
+        return result
+    }
+
+    fun updateLibrary(
+        songs: List<SongUiModel>,
+        albums: List<AlbumUiModel>,
+        artists: List<ArtistUiModel>,
+    ) {
+        _librarySongs.value = songs
+        _libraryAlbums.value = albums
+        _libraryArtists.value = artists
+    }
+
+    suspend fun syncAppleMusicIfNeeded(
+        isAuthenticated: Boolean,
+        hasExistingSongs: Boolean,
+    ): String? {
+        if (!isAuthenticated) {
+            withContext(Dispatchers.IO) {
+                songDao.deleteBySourceType("APPLE_MUSIC")
+                albumDao.deleteBySourceType("APPLE_MUSIC")
+                artistDao.deleteBySourceType("APPLE_MUSIC")
+            }
+
+            val (allSongs, allAlbums) = withContext(Dispatchers.IO) {
+                songDao.getAllSongs() to albumDao.getAllAlbums()
+            }
+            val allArtistsWithCounts = withContext(Dispatchers.IO) {
+                artistDao.getAllArtistsWithCounts()
+            }
+
+            val songModels = allSongs.map { entity ->
+                SongUiModel(
+                    id = entity.id,
+                    title = entity.title,
+                    artist = entity.artist,
+                    durationText = formatDurationMillis(entity.durationMillis),
+                    durationMillis = entity.durationMillis,
+                    trackNumber = entity.trackNumber,
+                    sourceType = entity.sourceType,
+                    audioUri = entity.audioUri,
+                    album = entity.album,
+                )
+            }
+            // Derive a best-effort release year per album from its songs, if available.
+            val albumIdToYear: Map<String, Int?> = allSongs
+                .mapNotNull { entity ->
+                    val albumId = entity.albumId ?: return@mapNotNull null
+                    albumId to entity.releaseYear
+                }
+                .groupBy(
+                    keySelector = { it.first },
+                    valueTransform = { it.second },
+                )
+                .mapValues { (_, years) ->
+                    years.filterNotNull().maxOrNull()
+                }
+
+            val albumModels = allAlbums.map { album ->
+                AlbumUiModel(
+                    id = album.id,
+                    title = album.name,
+                    artist = album.artist,
+                    sourceType = album.sourceType,
+                    releaseYear = albumIdToYear[album.id],
+                )
+            }
+            val artistModels = allArtistsWithCounts.map { artist ->
+                ArtistUiModel(
+                    id = artist.id,
+                    name = artist.name,
+                    songCount = artist.songCount,
+                    albumCount = artist.albumCount,
+                )
+            }
+
+            updateLibrary(
+                songs = songModels,
+                albums = albumModels,
+                artists = artistModels,
+            )
+            return null
+        }
+
+        val now = System.currentTimeMillis()
+        val lastSync = settingsManager.getLastAppleMusicSyncMillis()
+        val minSyncIntervalMillis = 6L * 60L * 60L * 1000L
+
+        if (hasExistingSongs && now - lastSync < minSyncIntervalMillis) {
+            return null
+        }
+
+        return try {
+            val songs = app.appleMusicApiClient.getLibrarySongs(limit = 200)
+            withContext(Dispatchers.IO) {
+                val entities = songs.map { song ->
+                    val albumName = song.albumName?.takeIf { it.isNotBlank() }
+                    val artistName = song.artistName
+                    val albumId = if (albumName != null) "APPLE_MUSIC:${artistName.trim()}:${albumName.trim()}" else null
+                    val artistId = if (artistName.isNotBlank()) "APPLE_MUSIC:${artistName.trim()}" else null
+
+                    SongEntity(
+                        id = song.id,
+                        title = song.name,
+                        artist = artistName,
+                        album = albumName,
+                        albumId = albumId,
+                        discNumber = null,
+                        trackNumber = null,
+                        durationMillis = song.durationMillis,
+                        sourceType = "APPLE_MUSIC",
+                        audioUri = song.id,
+                        artistId = artistId,
+                        releaseYear = song.releaseYear,
+                    )
+                }
+
+                val artistEntities: List<ArtistEntity> = entities
+                    .mapNotNull { entity ->
+                        val id = entity.artistId ?: return@mapNotNull null
+                        val name = entity.artist.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        id to ArtistEntity(
+                            id = id,
+                            name = name,
+                            sourceType = entity.sourceType,
+                        )
+                    }
+                    .distinctBy { it.first }
+                    .map { it.second }
+
+                val albumEntities: List<AlbumEntity> = entities
+                    .mapNotNull { entity ->
+                        val id = entity.albumId ?: return@mapNotNull null
+                        val name = entity.album ?: return@mapNotNull null
+                        id to AlbumEntity(
+                            id = id,
+                            name = name,
+                            artist = entity.artist,
+                            sourceType = entity.sourceType,
+                            artistId = entity.artistId,
+                        )
+                    }
+                    .distinctBy { it.first }
+                    .map { it.second }
+
+                songDao.deleteBySourceType("APPLE_MUSIC")
+                albumDao.deleteBySourceType("APPLE_MUSIC")
+                artistDao.deleteBySourceType("APPLE_MUSIC")
+                if (entities.isNotEmpty()) songDao.upsertAll(entities)
+                if (albumEntities.isNotEmpty()) albumDao.upsertAll(albumEntities)
+                if (artistEntities.isNotEmpty()) artistDao.upsertAll(artistEntities)
+            }
+
+            settingsManager.updateLastAppleMusicSyncMillis(System.currentTimeMillis())
+
+            val (allSongs, allAlbums) = withContext(Dispatchers.IO) {
+                songDao.getAllSongs() to albumDao.getAllAlbums()
+            }
+            val allArtistsWithCounts = withContext(Dispatchers.IO) {
+                artistDao.getAllArtistsWithCounts()
+            }
+
+            val songModels = allSongs.map { entity ->
+                SongUiModel(
+                    id = entity.id,
+                    title = entity.title,
+                    artist = entity.artist,
+                    durationText = formatDurationMillis(entity.durationMillis),
+                    durationMillis = entity.durationMillis,
+                    trackNumber = entity.trackNumber,
+                    sourceType = entity.sourceType,
+                    audioUri = entity.audioUri,
+                    album = entity.album,
+                )
+            }
+            val albumIdToYear: Map<String, Int?> = allSongs
+                .mapNotNull { entity ->
+                    val albumId = entity.albumId ?: return@mapNotNull null
+                    albumId to entity.releaseYear
+                }
+                .groupBy(
+                    keySelector = { it.first },
+                    valueTransform = { it.second },
+                )
+                .mapValues { (_, years) ->
+                    years.filterNotNull().maxOrNull()
+                }
+
+            val albumModels = allAlbums.map { album ->
+                AlbumUiModel(
+                    id = album.id,
+                    title = album.name,
+                    artist = album.artist,
+                    sourceType = album.sourceType,
+                    releaseYear = albumIdToYear[album.id],
+                )
+            }
+            val artistModels = allArtistsWithCounts.map { artist ->
+                ArtistUiModel(
+                    id = artist.id,
+                    name = artist.name,
+                    songCount = artist.songCount,
+                    albumCount = artist.albumCount,
+                )
+            }
+
+            updateLibrary(
+                songs = songModels,
+                albums = albumModels,
+                artists = artistModels,
+            )
+            null
+        } catch (e: Exception) {
+            e.message ?: "Failed to load Apple Music library"
+        }
     }
 
     suspend fun addSongToPlaylist(

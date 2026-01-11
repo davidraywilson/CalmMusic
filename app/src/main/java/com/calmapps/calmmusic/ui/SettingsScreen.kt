@@ -53,6 +53,10 @@ fun SettingsScreen(
     localScanProgress: Float,
     isIngestingLocal: Boolean,
     localIngestProgress: Float,
+    localScanTotalDiscovered: Int?,
+    localScanSkippedUnchanged: Int?,
+    localScanIndexedNewOrUpdated: Int?,
+    localScanDeletedMissing: Int?,
 ) {
     // 0 = General, 1 = Streaming, 2 = Local
     val tabOptions = listOf("General", "Streaming", "Local")
@@ -288,10 +292,19 @@ fun SettingsScreen(
                                 ) {
                                     val percent =
                                         (localScanProgress * 100f).toInt().coerceIn(0, 100)
-                                    TextMMD(
-                                        text = "Step 1 of 2 – Scanning folders for audio files… $percent%",
-                                        fontSize = 14.sp,
-                                    )
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        TextMMD(
+                                            text = "Step 1 of 2 – Scanning folders for audio files… $percent%",
+                                            fontSize = 14.sp,
+                                        )
+                                        if (localScanTotalDiscovered != null && localScanSkippedUnchanged != null && localScanIndexedNewOrUpdated != null) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            TextMMD(
+                                                text = "Found $localScanTotalDiscovered files · Skipped $localScanSkippedUnchanged unchanged · Indexed $localScanIndexedNewOrUpdated new/updated",
+                                                fontSize = 13.sp,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -324,10 +337,19 @@ fun SettingsScreen(
                                 ) {
                                     val ingestPercent =
                                         (localIngestProgress * 100f).toInt().coerceIn(0, 100)
-                                    TextMMD(
-                                        text = "Step 2 of 2 – Adding music to library… $ingestPercent%",
-                                        fontSize = 14.sp,
-                                    )
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        TextMMD(
+                                            text = "Step 2 of 2 – Adding music to library… $ingestPercent%",
+                                            fontSize = 14.sp,
+                                        )
+                                        if (localScanDeletedMissing != null && localScanDeletedMissing > 0) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            TextMMD(
+                                                text = "Removed ${localScanDeletedMissing} files that are no longer present",
+                                                fontSize = 13.sp,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }

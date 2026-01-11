@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -219,20 +220,14 @@ fun CalmMusic(app: CalmMusic) {
 
     var isAuthenticated by remember { mutableStateOf(app.tokenProvider.getUserToken().isNotEmpty()) }
 
-    // Observe global library data from ViewModel
-    val librarySongsState by viewModel.librarySongs.collectAsState()
-    val libraryAlbumsState by viewModel.libraryAlbums.collectAsState()
-    val libraryArtistsState by viewModel.libraryArtists.collectAsState()
+    val librarySongs by viewModel.librarySongs.collectAsState()
+    val libraryAlbums by viewModel.libraryAlbums.collectAsState()
+    val libraryArtists by viewModel.libraryArtists.collectAsState()
     val libraryPlaylistsState by viewModel.libraryPlaylists.collectAsState()
-    val isLoadingSongsState by viewModel.isLoadingSongs.collectAsState()
-    val isLoadingAlbumsState by viewModel.isLoadingAlbums.collectAsState()
+    val isLoadingSongs by viewModel.isLoadingSongs.collectAsState()
+    val isLoadingAlbums by viewModel.isLoadingAlbums.collectAsState()
 
-    var librarySongs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
     var libraryPlaylists by remember { mutableStateOf<List<PlaylistUiModel>>(emptyList()) }
-    var libraryAlbums by remember { mutableStateOf<List<AlbumUiModel>>(emptyList()) }
-    var libraryArtists by remember { mutableStateOf<List<ArtistUiModel>>(emptyList()) }
-    var isLoadingSongs by remember { mutableStateOf(true) }
-    var isLoadingAlbums by remember { mutableStateOf(true) }
     var songsError by remember { mutableStateOf<String?>(null) }
     var albumsError by remember { mutableStateOf<String?>(null) }
     var playlistsError by remember { mutableStateOf<String?>(null) }
@@ -283,6 +278,17 @@ fun CalmMusic(app: CalmMusic) {
     var localScanProgress by remember { mutableStateOf(0f) }
     var isIngestingLocal by remember { mutableStateOf(false) }
     var localIngestProgress by remember { mutableStateOf(0f) }
+    var localScanTotalDiscovered by remember { mutableStateOf<Int?>(null) }
+    var localScanSkippedUnchanged by remember { mutableStateOf<Int?>(null) }
+    var localScanIndexedNewOrUpdated by remember { mutableStateOf<Int?>(null) }
+    var localScanDeletedMissing by remember { mutableStateOf<Int?>(null) }
+
+    val isLibrarySyncInProgress by remember {
+        derivedStateOf { isRescanningLocal || isIngestingLocal }
+    }
+    val hasAnySongs by remember {
+        derivedStateOf { librarySongs.isNotEmpty() }
+    }
 
     var settingsSelectedTab by remember { mutableStateOf(0) }
 
@@ -343,6 +349,10 @@ fun CalmMusic(app: CalmMusic) {
         localScanProgress = 0f
         isIngestingLocal = false
         localIngestProgress = 0f
+        localScanTotalDiscovered = null
+        localScanSkippedUnchanged = null
+        localScanIndexedNewOrUpdated = null
+        localScanDeletedMissing = null
         songsError = null
         try {
             val result = viewModel.resyncLocalLibrary(
@@ -358,9 +368,13 @@ fun CalmMusic(app: CalmMusic) {
             )
 
             songsError = result.errorMessage
-            librarySongs = result.songs
-            libraryAlbums = result.albums
-            libraryArtists = result.artists
+
+            result.stats?.let { stats ->
+                localScanTotalDiscovered = stats.totalDiscovered
+                localScanSkippedUnchanged = stats.skippedUnchanged
+                localScanIndexedNewOrUpdated = stats.indexedNewOrUpdated
+                localScanDeletedMissing = stats.deletedMissing
+            }
         } finally {
             isRescanningLocal = false
             isIngestingLocal = false
@@ -832,22 +846,15 @@ fun CalmMusic(app: CalmMusic) {
         }
     }
 
-    LaunchedEffect(
-        librarySongsState,
-        libraryAlbumsState,
-        libraryArtistsState,
-        libraryPlaylistsState,
-        isLoadingSongsState,
-        isLoadingAlbumsState
-    ) {
-        librarySongs = librarySongsState
-        libraryAlbums = libraryAlbumsState
-        libraryArtists = libraryArtistsState
+    // Keep the locally mirrored playlists list in sync with the
+    // ViewModel-backed playlists used by PlaylistsScreen.
+    LaunchedEffect(libraryPlaylistsState) {
         libraryPlaylists = libraryPlaylistsState
-        isLoadingSongs = isLoadingSongsState
-        isLoadingAlbums = isLoadingAlbumsState
     }
 
+    // Keep the ViewModel's playback snapshot in sync, including
+    // position/duration. This may update relatively frequently but stays
+    // in-memory and does not touch the system overlay.
     LaunchedEffect(
         playbackQueue,
         playbackQueueIndex,
@@ -872,10 +879,14 @@ fun CalmMusic(app: CalmMusic) {
             positionMs = nowPlayingPositionMs,
             durationMs = nowPlayingDurationMs,
         )
+    }
 
-        // ----------------------------------------------------------------
-        // NEW CODE: Update Overlay State Manager
-        // ----------------------------------------------------------------
+    LaunchedEffect(
+        playbackQueue,
+        currentSongId,
+        nowPlayingSong,
+        isPlaybackPlaying,
+    ) {
         app.playbackStateManager.updateQueue(playbackQueue)
         if (nowPlayingSong != null) {
             app.playbackStateManager.updateState(
@@ -883,7 +894,7 @@ fun CalmMusic(app: CalmMusic) {
                 title = nowPlayingSong!!.title,
                 artist = nowPlayingSong!!.artist,
                 isPlaying = isPlaybackPlaying,
-                sourceType = nowPlayingSong!!.sourceType
+                sourceType = nowPlayingSong!!.sourceType,
             )
         } else {
             app.playbackStateManager.clearState()
@@ -908,35 +919,32 @@ fun CalmMusic(app: CalmMusic) {
     LaunchedEffect(localMediaController, nowPlayingSong, playbackQueue) {
         val controller = localMediaController ?: return@LaunchedEffect
         var lastLocalQueueIndex: Int? = null
-        while (true) {
-            if (nowPlayingSong?.sourceType == "LOCAL_FILE") {
-                isPlaybackPlaying = controller.playWhenReady
-                nowPlayingPositionMs = controller.currentPosition
-                val duration = controller.duration
-                if (duration > 0) {
-                    nowPlayingDurationMs = duration
-                }
-                val currentLocalIndex = controller.currentMediaItemIndex
-                if (currentLocalIndex >= 0 && currentLocalIndex != lastLocalQueueIndex) {
-                    lastLocalQueueIndex = currentLocalIndex
-                    val localOnlyQueue = playbackQueue
-                        .filter { it.sourceType == "LOCAL_FILE" && !it.audioUri.isNullOrBlank() }
-                    if (currentLocalIndex in localOnlyQueue.indices) {
-                        val newLocalSong = localOnlyQueue[currentLocalIndex]
-                        val globalIndex = playbackQueue.indexOfFirst { it.id == newLocalSong.id }
-                        if (globalIndex >= 0) {
-                            playbackQueueIndex = globalIndex
-                            currentSongId = newLocalSong.id
-                            nowPlayingSong = newLocalSong
-                            nowPlayingDurationMs =
-                                newLocalSong.durationMillis ?: nowPlayingDurationMs
-                            nowPlayingPositionMs = 0L
-                            isPlaybackPlaying = controller.playWhenReady
-                        }
+        while (nowPlayingSong?.sourceType == "LOCAL_FILE") {
+            isPlaybackPlaying = controller.playWhenReady
+            nowPlayingPositionMs = controller.currentPosition
+            val duration = controller.duration
+            if (duration > 0) {
+                nowPlayingDurationMs = duration
+            }
+            val currentLocalIndex = controller.currentMediaItemIndex
+            if (currentLocalIndex >= 0 && currentLocalIndex != lastLocalQueueIndex) {
+                lastLocalQueueIndex = currentLocalIndex
+                val localOnlyQueue = playbackQueue
+                    .filter { it.sourceType == "LOCAL_FILE" && !it.audioUri.isNullOrBlank() }
+                if (currentLocalIndex in localOnlyQueue.indices) {
+                    val newLocalSong = localOnlyQueue[currentLocalIndex]
+                    val globalIndex = playbackQueue.indexOfFirst { it.id == newLocalSong.id }
+                    if (globalIndex >= 0) {
+                        playbackQueueIndex = globalIndex
+                        currentSongId = newLocalSong.id
+                        nowPlayingSong = newLocalSong
+                        nowPlayingDurationMs = newLocalSong.durationMillis ?: nowPlayingDurationMs
+                        nowPlayingPositionMs = 0L
+                        isPlaybackPlaying = controller.playWhenReady
                     }
                 }
             }
-            delay(500)
+            delay(750)
         }
     }
 
@@ -963,194 +971,19 @@ fun CalmMusic(app: CalmMusic) {
     }
 
     LaunchedEffect(isAuthenticated) {
-        if (isAuthenticated) {
-            songsError = null
-            albumsError = null
-            playlistsError = null
-            val now = System.currentTimeMillis()
-            val lastSync = settingsManager.getLastAppleMusicSyncMillis()
-            val hasExistingSongs = librarySongs.isNotEmpty()
-            val minSyncIntervalMillis = 6L * 60L * 60L * 1000L
+        songsError = null
+        albumsError = null
+        playlistsError = null
 
-            if (hasExistingSongs && now - lastSync < minSyncIntervalMillis) {
-                return@LaunchedEffect
-            }
-            try {
-                val songs = app.appleMusicApiClient.getLibrarySongs(limit = 200)
-                withContext(Dispatchers.IO) {
-                    val entities = songs.map { song ->
-                        val albumName = song.albumName?.takeIf { it.isNotBlank() }
-                        val artistName = song.artistName
-                        val albumId = if (albumName != null) "APPLE_MUSIC:${artistName.trim()}:${albumName.trim()}" else null
-                        val artistId = if (artistName.isNotBlank()) "APPLE_MUSIC:${artistName.trim()}" else null
-
-                        SongEntity(
-                            id = song.id,
-                            title = song.name,
-                            artist = artistName,
-                            album = albumName,
-                            albumId = albumId,
-                            discNumber = null,
-                            trackNumber = null,
-                            durationMillis = song.durationMillis,
-                            sourceType = "APPLE_MUSIC",
-                            audioUri = song.id,
-                            artistId = artistId,
-                            releaseYear = song.releaseYear,
-                        )
-                    }
-
-                    val artistEntities: List<ArtistEntity> = entities
-                        .mapNotNull { entity ->
-                            val id = entity.artistId ?: return@mapNotNull null
-                            val name = entity.artist.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                            id to ArtistEntity(
-                                id = id,
-                                name = name,
-                                sourceType = entity.sourceType,
-                            )
-                        }
-                        .distinctBy { it.first }
-                        .map { it.second }
-
-                    val albumEntities: List<AlbumEntity> = entities
-                        .mapNotNull { entity ->
-                            val id = entity.albumId ?: return@mapNotNull null
-                            val name = entity.album ?: return@mapNotNull null
-                            id to AlbumEntity(
-                                id = id,
-                                name = name,
-                                artist = entity.artist,
-                                sourceType = entity.sourceType,
-                                artistId = entity.artistId,
-                            )
-                        }
-                        .distinctBy { it.first }
-                        .map { it.second }
-
-                    songDao.deleteBySourceType("APPLE_MUSIC")
-                    albumDao.deleteBySourceType("APPLE_MUSIC")
-                    artistDao.deleteBySourceType("APPLE_MUSIC")
-                    if (entities.isNotEmpty()) songDao.upsertAll(entities)
-                    if (albumEntities.isNotEmpty()) albumDao.upsertAll(albumEntities)
-                    if (artistEntities.isNotEmpty()) artistDao.upsertAll(artistEntities)
-                }
-
-                settingsManager.updateLastAppleMusicSyncMillis(System.currentTimeMillis())
-
-                val (allSongs, allAlbums) = withContext(Dispatchers.IO) {
-                    songDao.getAllSongs() to albumDao.getAllAlbums()
-                }
-                val allArtistsWithCounts = withContext(Dispatchers.IO) {
-                    artistDao.getAllArtistsWithCounts()
-                }
-                librarySongs = allSongs.map { entity ->
-                    SongUiModel(
-                        id = entity.id,
-                        title = entity.title,
-                        artist = entity.artist,
-                        durationText = formatDurationMillis(entity.durationMillis),
-                        durationMillis = entity.durationMillis,
-                        trackNumber = entity.trackNumber,
-                        sourceType = entity.sourceType,
-                        audioUri = entity.audioUri,
-                        album = entity.album,
-                    )
-                }
-                // Derive a best-effort release year per album from its songs, if available.
-                val albumIdToYear: Map<String, Int?> = allSongs
-                    .mapNotNull { entity ->
-                        val albumId = entity.albumId ?: return@mapNotNull null
-                        albumId to entity.releaseYear
-                    }
-                    .groupBy(
-                        keySelector = { it.first },
-                        valueTransform = { it.second },
-                    )
-                    .mapValues { (_, years) ->
-                        years.filterNotNull().maxOrNull()
-                    }
-
-                libraryAlbums = allAlbums.map { album ->
-                    AlbumUiModel(
-                        id = album.id,
-                        title = album.name,
-                        artist = album.artist,
-                        sourceType = album.sourceType,
-                        releaseYear = albumIdToYear[album.id],
-                    )
-                }
-                libraryArtists = allArtistsWithCounts.map { artist ->
-                    ArtistUiModel(
-                        id = artist.id,
-                        name = artist.name,
-                        songCount = artist.songCount,
-                        albumCount = artist.albumCount,
-                    )
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                songsError = e.message ?: "Failed to load songs"
-                albumsError = e.message ?: "Failed to load albums"
-            }
-        } else {
-            withContext(Dispatchers.IO) {
-                songDao.deleteBySourceType("APPLE_MUSIC")
-                albumDao.deleteBySourceType("APPLE_MUSIC")
-                artistDao.deleteBySourceType("APPLE_MUSIC")
-            }
-            val (allSongs, allAlbums) = withContext(Dispatchers.IO) {
-                songDao.getAllSongs() to albumDao.getAllAlbums()
-            }
-            val allArtistsWithCounts = withContext(Dispatchers.IO) {
-                artistDao.getAllArtistsWithCounts()
-            }
-            librarySongs = allSongs.map { entity ->
-                SongUiModel(
-                    id = entity.id,
-                    title = entity.title,
-                    artist = entity.artist,
-                    durationText = formatDurationMillis(entity.durationMillis),
-                    durationMillis = entity.durationMillis,
-                    trackNumber = entity.trackNumber,
-                    sourceType = entity.sourceType,
-                    audioUri = entity.audioUri,
-                    album = entity.album,
-                )
-            }
-            // Derive a best-effort release year per album from its songs, if available.
-            val albumIdToYear: Map<String, Int?> = allSongs
-                .mapNotNull { entity ->
-                    val albumId = entity.albumId ?: return@mapNotNull null
-                    albumId to entity.releaseYear
-                }
-                .groupBy(
-                    keySelector = { it.first },
-                    valueTransform = { it.second },
-                )
-                .mapValues { (_, years) ->
-                    years.filterNotNull().maxOrNull()
-                }
-
-            libraryAlbums = allAlbums.map { album ->
-                AlbumUiModel(
-                    id = album.id,
-                    title = album.name,
-                    artist = album.artist,
-                    sourceType = album.sourceType,
-                    releaseYear = albumIdToYear[album.id],
-                )
-            }
-            libraryArtists = allArtistsWithCounts.map { artist ->
-                ArtistUiModel(
-                    id = artist.id,
-                    name = artist.name,
-                    songCount = artist.songCount,
-                    albumCount = artist.albumCount,
-                )
-            }
-        }
+        // val hasExistingSongs = librarySongs.isNotEmpty()
+        // val errorMessage = viewModel.syncAppleMusicIfNeeded(
+        //     isAuthenticated = isAuthenticated,
+        //     hasExistingSongs = hasExistingSongs,
+        // )
+        // if (errorMessage != null) {
+        //     songsError = errorMessage
+        //     albumsError = errorMessage
+        // }
     }
 
     LaunchedEffect(includeLocalMusic, localMusicFolders) {
@@ -1365,8 +1198,7 @@ fun CalmMusic(app: CalmMusic) {
             ) {
                 composable(Screen.Playlists.route) {
                     PlaylistsScreen(
-                        isAuthenticated = isAuthenticated,
-                        viewModel = viewModel,
+                        playlists = libraryPlaylists,
                         isInEditMode = isPlaylistsEditMode,
                         onPlaylistClick = { playlist: PlaylistUiModel ->
                             selectedPlaylist = playlist
@@ -1392,8 +1224,8 @@ fun CalmMusic(app: CalmMusic) {
                         artists = libraryArtists,
                         isLoading = isLoadingSongs || isLoadingAlbums,
                         errorMessage = null,
-                        isSyncInProgress = isRescanningLocal || isIngestingLocal,
-                        hasAnySongs = librarySongs.isNotEmpty(),
+                        isSyncInProgress = isLibrarySyncInProgress,
+                        hasAnySongs = hasAnySongs,
                         onOpenStreamingSettingsClick = openStreamingSettings,
                         onOpenLocalSettingsClick = openLocalSettings,
                         onArtistClick = { artist ->
@@ -1412,7 +1244,7 @@ fun CalmMusic(app: CalmMusic) {
                         isLoading = isLoadingSongs,
                         errorMessage = songsError,
                         currentSongId = currentSongId,
-                        isSyncInProgress = isRescanningLocal || isIngestingLocal,
+                        isSyncInProgress = isLibrarySyncInProgress,
                         onPlaySongClick = { song: SongUiModel ->
                             val index = librarySongs.indexOfFirst { it.id == song.id }
                             val startIndex = if (index >= 0) index else 0
@@ -1431,8 +1263,8 @@ fun CalmMusic(app: CalmMusic) {
                         albums = libraryAlbums,
                         isLoading = isLoadingAlbums,
                         errorMessage = albumsError,
-                        isSyncInProgress = isRescanningLocal || isIngestingLocal,
-                        hasAnySongs = librarySongs.isNotEmpty(),
+                        isSyncInProgress = isLibrarySyncInProgress,
+                        hasAnySongs = hasAnySongs,
                         onOpenStreamingSettingsClick = openStreamingSettings,
                         onOpenLocalSettingsClick = openLocalSettings,
                         onAlbumClick = { album ->
@@ -1752,6 +1584,10 @@ fun CalmMusic(app: CalmMusic) {
                         localScanProgress = localScanProgress,
                         isIngestingLocal = isIngestingLocal,
                         localIngestProgress = localIngestProgress,
+                        localScanTotalDiscovered = localScanTotalDiscovered,
+                        localScanSkippedUnchanged = localScanSkippedUnchanged,
+                        localScanIndexedNewOrUpdated = localScanIndexedNewOrUpdated,
+                        localScanDeletedMissing = localScanDeletedMissing,
                     )
                 }
             }
@@ -1859,6 +1695,7 @@ fun CalmMusic(app: CalmMusic) {
 
                         Spacer(modifier = Modifier.height(8.dp))
                     } else {
+                        val lastPlaylistId = libraryPlaylists.lastOrNull()?.id
                         LazyColumnMMD(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1869,13 +1706,14 @@ fun CalmMusic(app: CalmMusic) {
                                 items = libraryPlaylists,
                                 key = { it.id },
                             ) { playlist ->
+                                val isLast = playlist.id == lastPlaylistId
                                 PlaylistItem(
                                     playlist = playlist,
                                     onClick = {
                                         showAddToPlaylistDialog = false
                                         addSongToPlaylist(song, playlist)
                                     },
-                                    showDivider = playlist != libraryPlaylists.lastOrNull(),
+                                    showDivider = !isLast,
                                 )
                             }
                         }

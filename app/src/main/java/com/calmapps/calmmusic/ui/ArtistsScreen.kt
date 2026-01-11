@@ -91,12 +91,17 @@ fun ArtistsScreen(
             }
 
             else -> {
+                val lastArtistId = artists.lastOrNull()?.id
                 LazyColumnMMD(contentPadding = PaddingValues(16.dp)) {
-                    items(artists) { artist ->
+                    items(
+                        items = artists,
+                        key = { it.id },
+                    ) { artist ->
+                        val isLast = artist.id == lastArtistId
                         ArtistItem(
                             artist = artist,
                             onClick = { onArtistClick(artist) },
-                            showDivider = artist != artists.lastOrNull(),
+                            showDivider = !isLast,
                         )
                     }
                 }

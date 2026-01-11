@@ -39,6 +39,8 @@ data class SongEntity(
     val artistId: String? = null,
     /** Optional release year for this song/album, when available. */
     val releaseYear: Int? = null,
+    val localLastModifiedMillis: Long? = null,
+    val localFileSizeBytes: Long? = null,
 )
 
 @Entity(
@@ -106,6 +108,9 @@ interface SongDao {
 
     @Query("DELETE FROM songs WHERE sourceType = :sourceType")
     suspend fun deleteBySourceType(sourceType: String)
+
+    @Query("DELETE FROM songs WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
 }
 
 @Dao

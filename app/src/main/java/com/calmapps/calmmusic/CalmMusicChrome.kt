@@ -13,6 +13,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -77,6 +78,8 @@ fun CalmMusicTopAppBar(
     onNowPlayingClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val navRoutes = remember { navItems.map { it.route } }
+
     TopAppBarMMD(
         navigationIcon = {
             when {
@@ -98,7 +101,7 @@ fun CalmMusicTopAppBar(
                     }
                 }
 
-                canNavigateBack && currentDestination?.route !in navItems.map { it.route } -> {
+                canNavigateBack && currentDestination?.route !in navRoutes -> {
                     IconButton(onClick = onBackClick) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -231,7 +234,9 @@ private fun RowScope.CalmMusicTopAppBarActions(
     onPlaylistAddSongsDoneClick: () -> Unit,
     onNowPlayingClick: () -> Unit,
 ) {
-    if (currentDestination?.route != Screen.Search.route && currentDestination?.route in navItems.map { it.route }) {
+    val navRoutes = remember { navItems.map { it.route } }
+
+    if (currentDestination?.route != Screen.Search.route && currentDestination?.route in navRoutes) {
         if (currentDestination?.route == Screen.Playlists.route && hasLibraryPlaylists && !isPlaylistsEditMode) {
             IconButton(onClick = onEnterPlaylistsEditClick) {
                 Icon(
@@ -351,7 +356,9 @@ fun CalmMusicBottomBar(
     currentDestination: NavDestination?,
     onNavigate: (String) -> Unit,
 ) {
-    if (currentDestination?.route in navItems.map { it.route }) {
+    val navRoutes = remember { navItems.map { it.route } }
+
+    if (currentDestination?.route in navRoutes) {
         NavigationBarMMD(
             modifier = Modifier.padding(bottom = 2.dp),
         ) {

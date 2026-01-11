@@ -22,11 +22,19 @@ class LibraryRepository(
     private val albumDao by lazy { database.albumDao() }
     private val artistDao by lazy { database.artistDao() }
 
+    data class LocalResyncStats(
+        val totalDiscovered: Int,
+        val skippedUnchanged: Int,
+        val indexedNewOrUpdated: Int,
+        val deletedMissing: Int,
+    )
+
     data class LocalResyncResult(
         val songs: List<SongUiModel>,
         val albums: List<AlbumUiModel>,
         val artists: List<ArtistUiModel>,
         val errorMessage: String?,
+        val stats: LocalResyncStats? = null,
     )
 
     /**
@@ -42,11 +50,10 @@ class LibraryRepository(
         onIngestProgress: (Float) -> Unit,
     ): LocalResyncResult {
         var error: String? = null
+        var stats: LocalResyncStats? = null
 
         try {
             if (!includeLocal) {
-                // No local files included: clear any existing LOCAL_FILE rows. Treat this as a
-                // quick ingestion phase so the UI can reflect that work completed.
                 onScanProgress(1f)
                 onIngestProgress(0f)
                 withContext(Dispatchers.IO) {
@@ -58,37 +65,27 @@ class LibraryRepository(
             } else {
                 if (folders.isNotEmpty()) {
                     try {
-                        // Phase 1: crawl folders via SAF and build an in-memory list of song entities.
-                        val localEntities = withContext(Dispatchers.IO) {
-                            LocalMusicScanner.scanFolders(app, folders) { processed, total ->
+                        val (localEntities, existingLocalSongs) = withContext(Dispatchers.IO) {
+                            val existingLocalSongs = songDao.getSongsBySourceType("LOCAL_FILE")
+                            val existingByUri = existingLocalSongs.associateBy { it.audioUri }
+                            val scanned = LocalMusicScanner.scanFolders(app, folders, existingByUri) { processed, total ->
                                 val progress = if (total > 0) {
                                     (processed.toFloat() / total.toFloat()).coerceIn(0f, 1f)
                                 } else {
-                                    // If we didn't find any audio files, treat the crawl as
-                                    // immediately complete so the scan progress bar can finish.
                                     1f
                                 }
                                 onScanProgress(progress)
                             }
+                            scanned to existingLocalSongs
                         }
 
-                        // Phase 2: ingest results into the Room database. We break this into
-                        // three conceptual subphases for progress:
-                        //  - 10%: building artists
-                        //  - 10%: building albums
-                        //  - 80%: writing songs/albums/artists to the database
                         onIngestProgress(0f)
 
                         withContext(Dispatchers.IO) {
-                            // 10%: build unique artists from the scanned song entities.
                             val artistEntities: List<ArtistEntity> = localEntities
                                 .mapNotNull { entity ->
                                     val id = entity.artistId ?: return@mapNotNull null
 
-                                    // For local files, derive the display name from the Album Artist
-                                    // (which we encoded into artistId) so that artist rows and album
-                                    // rows are labeled consistently by album artist, not per-track
-                                    // artist strings that may contain features.
                                     val name = if (entity.sourceType == "LOCAL_FILE" && id.startsWith("LOCAL_FILE:")) {
                                         id.removePrefix("LOCAL_FILE:")
                                     } else {
@@ -106,16 +103,10 @@ class LibraryRepository(
 
                             onIngestProgress(0.1f)
 
-                            // 10%: build unique albums from the scanned song entities.
                             val albumEntities: List<AlbumEntity> = localEntities
                                 .mapNotNull { entity ->
                                     val id = entity.albumId ?: return@mapNotNull null
                                     val name = entity.album ?: return@mapNotNull null
-
-                                    // For local files, use the same album-artist-derived name that
-                                    // we store in ArtistEntity so albums are grouped and labeled by
-                                    // album artist. For other sources, fall back to the track artist
-                                    // string.
                                     val artistName = if (entity.sourceType == "LOCAL_FILE" && (entity.artistId ?: "").startsWith("LOCAL_FILE:")) {
                                         entity.artistId!!.removePrefix("LOCAL_FILE:")
                                     } else {
@@ -135,8 +126,6 @@ class LibraryRepository(
 
                             onIngestProgress(0.2f)
 
-                            // If there is nothing to ingest, mark the ingest phase as complete
-                            // immediately.
                             if (localEntities.isEmpty() && albumEntities.isEmpty() && artistEntities.isEmpty()) {
                                 onIngestProgress(1f)
                                 songDao.deleteBySourceType("LOCAL_FILE")
@@ -145,9 +134,27 @@ class LibraryRepository(
                                 return@withContext
                             }
 
-                            // 80% of the ingest phase is reserved for actually writing songs,
-                            // albums, and artists into the database.
-                            val totalWriteItems = localEntities.size + albumEntities.size + artistEntities.size
+                            val existingById = existingLocalSongs.associateBy { it.id }
+                            val scannedById = localEntities.associateBy { it.id }
+
+                            val songsToDelete = existingById.keys - scannedById.keys
+                            val songsToUpsert = scannedById.values.filter { newEntity ->
+                                val existing = existingById[newEntity.id]
+                                existing == null || existing != newEntity
+                            }
+
+                            val totalDiscovered = localEntities.size
+                            val indexedNewOrUpdated = songsToUpsert.size
+                            val skippedUnchanged = (totalDiscovered - indexedNewOrUpdated).coerceAtLeast(0)
+                            val deletedMissing = songsToDelete.size
+                            stats = LocalResyncStats(
+                                totalDiscovered = totalDiscovered,
+                                skippedUnchanged = skippedUnchanged,
+                                indexedNewOrUpdated = indexedNewOrUpdated,
+                                deletedMissing = deletedMissing,
+                            )
+
+                            val totalWriteItems = songsToDelete.size + songsToUpsert.size + albumEntities.size + artistEntities.size
                             var writtenItems = 0
 
                             fun reportWriteProgress() {
@@ -157,18 +164,24 @@ class LibraryRepository(
                                 onIngestProgress(progress.coerceIn(0f, 1f))
                             }
 
-                            songDao.deleteBySourceType("LOCAL_FILE")
-                            albumDao.deleteBySourceType("LOCAL_FILE")
-                            artistDao.deleteBySourceType("LOCAL_FILE")
+                            if (songsToDelete.isNotEmpty()) {
+                                songDao.deleteByIds(songsToDelete.toList())
+                                writtenItems += songsToDelete.size
+                                reportWriteProgress()
+                            }
 
-                            if (localEntities.isNotEmpty()) {
-                                val chunkSize = 100.coerceAtMost(localEntities.size)
-                                localEntities.chunked(chunkSize).forEach { chunk ->
+                            if (songsToUpsert.isNotEmpty()) {
+                                val chunkSize = 100.coerceAtMost(songsToUpsert.size)
+                                songsToUpsert.chunked(chunkSize).forEach { chunk ->
                                     songDao.upsertAll(chunk)
                                     writtenItems += chunk.size
                                     reportWriteProgress()
                                 }
                             }
+
+                            albumDao.deleteBySourceType("LOCAL_FILE")
+                            artistDao.deleteBySourceType("LOCAL_FILE")
+
                             if (albumEntities.isNotEmpty()) {
                                 albumDao.upsertAll(albumEntities)
                                 writtenItems += albumEntities.size
@@ -217,7 +230,6 @@ class LibraryRepository(
                     album = entity.album,
                 )
             }
-            // Derive a best-effort release year per album from its songs, if available.
             val albumIdToYear: Map<String, Int?> = allSongs
                 .mapNotNull { entity ->
                     val albumId = entity.albumId ?: return@mapNotNull null
@@ -254,6 +266,7 @@ class LibraryRepository(
                 albums = albumModels,
                 artists = artistModels,
                 errorMessage = error,
+                stats = stats,
             )
         } catch (e: Exception) {
             val message = e.message ?: "Failed to scan local music"
@@ -262,6 +275,7 @@ class LibraryRepository(
                 albums = emptyList(),
                 artists = emptyList(),
                 errorMessage = message,
+                stats = null,
             )
         }
     }

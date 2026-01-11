@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -38,6 +39,43 @@ fun SongItem(
     onClick: () -> Unit,
     showDivider: Boolean = true,
 ) {
+    val (isLocal, isMp4, subtitle) = remember(
+        song.id,
+        song.audioUri,
+        song.artist,
+        song.durationText,
+        song.sourceType,
+    ) {
+        val local = song.sourceType == "LOCAL_FILE"
+        val fileExtension = if (local) {
+            val uriString = song.audioUri ?: song.id
+            try {
+                val lastSegment = Uri.parse(uriString).lastPathSegment ?: ""
+                lastSegment.substringAfterLast('.', "").lowercase()
+            } catch (_: Exception) {
+                ""
+            }
+        } else {
+            ""
+        }
+        val mp4 = local && fileExtension == "mp4"
+
+        val baseArtist = song.artist.ifBlank { if (local) "Local file" else "" }
+        val prefix = if (mp4) "MP4 • " else ""
+
+        val sub = if (!song.durationText.isNullOrBlank()) {
+            "$prefix${baseArtist} • ${song.durationText}"
+        } else {
+            when {
+                baseArtist.isNotBlank() -> "$prefix$baseArtist"
+                prefix.isNotBlank() -> prefix.trimEnd(' ', '•')
+                else -> ""
+            }
+        }
+
+        Triple(local, mp4, sub)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -79,33 +117,6 @@ fun SongItem(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // Display the track-level artist (including featured artists)
-                val isLocal = song.sourceType == "LOCAL_FILE"
-                val fileExtension = if (isLocal) {
-                    val uriString = song.audioUri ?: song.id
-                    try {
-                        val lastSegment = Uri.parse(uriString).lastPathSegment ?: ""
-                        lastSegment.substringAfterLast('.', "").lowercase()
-                    } catch (_: Exception) {
-                        ""
-                    }
-                } else {
-                    ""
-                }
-                val isMp4 = isLocal && fileExtension == "mp4"
-
-                val baseArtist = song.artist.ifBlank { if (isLocal) "Local file" else "" }
-                val prefix = when {
-                    isMp4 -> "MP4 • "
-                    else -> ""
-                }
-
-                val subtitle = if (!song.durationText.isNullOrBlank()) {
-                    "$prefix${baseArtist} • ${song.durationText}"
-                } else {
-                    if (baseArtist.isNotBlank()) "$prefix$baseArtist" else if (prefix.isNotBlank()) prefix.trimEnd(' ', '•') else ""
-                }
-
                 TextMMD(
                     text = subtitle,
                     fontSize = 16.sp,
@@ -130,6 +141,24 @@ fun PlaylistItem(
     onClick: () -> Unit,
     showDivider: Boolean = true,
 ) {
+    val subtitle = remember(playlist.id, playlist.description, playlist.songCount) {
+        val songCountText = playlist.songCount?.let { count ->
+            if (count == 1) "1 song" else "$count songs"
+        }
+        buildString {
+            val description = playlist.description?.takeIf { it.isNotBlank() }
+            if (!description.isNullOrEmpty()) {
+                append(description)
+            }
+            if (!songCountText.isNullOrEmpty()) {
+                if (isNotEmpty()) {
+                    append(" • ")
+                }
+                append(songCountText)
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -144,23 +173,6 @@ fun PlaylistItem(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-
-            val songCountText = playlist.songCount?.let { count ->
-                if (count == 1) "1 song" else "$count songs"
-            }
-
-            val subtitle = buildString {
-                val description = playlist.description?.takeIf { it.isNotBlank() }
-                if (!description.isNullOrEmpty()) {
-                    append(description)
-                }
-                if (!songCountText.isNullOrEmpty()) {
-                    if (isNotEmpty()) {
-                        append(" • ")
-                    }
-                    append(songCountText)
-                }
-            }
 
             if (subtitle.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(4.dp))
@@ -189,23 +201,26 @@ fun SelectablePlaylistItem(
     onSelectionChange: (Boolean) -> Unit,
     showDivider: Boolean,
 ) {
-    // Row-local selection state so checkbox can update immediately, then we
-    // propagate the new value upward. Parent-driven resets (e.g., leaving
-    // edit mode) will update isSelected, and we treat that as the new source
-    // of truth on the next recomposition.
-    var localSelected by remember(playlist.id) { mutableStateOf(isSelected) }
-
-    // If parent clears selection (isSelected == false) while we still think we're
-    // selected, trust the parent and update local state. This keeps things
-    // consistent when edit mode is exited or external actions reset selection.
-    if (!isSelected && localSelected) {
-        localSelected = false
+    val subtitle = remember(playlist.id, playlist.description, playlist.songCount) {
+        val songCountText = playlist.songCount?.let { count ->
+            if (count == 1) "1 song" else "$count songs"
+        }
+        buildString {
+            val description = playlist.description?.takeIf { it.isNotBlank() }
+            if (!description.isNullOrEmpty()) {
+                append(description)
+            }
+            if (!songCountText.isNullOrEmpty()) {
+                if (isNotEmpty()) {
+                    append(" • ")
+                }
+                append(songCountText)
+            }
+        }
     }
 
     val toggle: () -> Unit = {
-        val newValue = !localSelected
-        localSelected = newValue
-        onSelectionChange(newValue)
+        onSelectionChange(!isSelected)
     }
 
     Column(
@@ -219,9 +234,8 @@ fun SelectablePlaylistItem(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             CheckboxMMD(
-                checked = localSelected,
+                checked = isSelected,
                 onCheckedChange = { checked ->
-                    localSelected = checked
                     onSelectionChange(checked)
                 },
                 modifier = Modifier.padding(0.dp),
@@ -239,23 +253,6 @@ fun SelectablePlaylistItem(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-
-                val songCountText = playlist.songCount?.let { count ->
-                    if (count == 1) "1 song" else "$count songs"
-                }
-
-                val subtitle = buildString {
-                    val description = playlist.description?.takeIf { it.isNotBlank() }
-                    if (!description.isNullOrEmpty()) {
-                        append(description)
-                    }
-                    if (!songCountText.isNullOrEmpty()) {
-                        if (isNotEmpty()) {
-                            append(" • ")
-                        }
-                        append(songCountText)
-                    }
-                }
 
                 if (subtitle.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
