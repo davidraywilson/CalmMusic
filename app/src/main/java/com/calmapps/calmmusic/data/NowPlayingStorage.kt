@@ -45,7 +45,7 @@ class NowPlayingStorage(context: Context) {
         val index = if (indexRaw >= 0) indexRaw else null
         val isPlaying = prefs.getBoolean(KEY_IS_PLAYING, false)
         val positionMs = prefs.getLong(KEY_POSITION_MS, 0L)
-        val repeatModeKey = prefs.getString(KEY_REPEAT_MODE, RepeatModeKeys.OFF) ?: RepeatModeKeys.OFF
+        val repeatModeKey = prefs.getString(KEY_REPEAT_MODE, NowPlayingRepeatModeKeys.OFF) ?: NowPlayingRepeatModeKeys.OFF
         val isShuffleOn = prefs.getBoolean(KEY_IS_SHUFFLE_ON, false)
 
         return NowPlayingSnapshot(
@@ -68,11 +68,11 @@ class NowPlayingStorage(context: Context) {
         private const val KEY_IS_SHUFFLE_ON = "is_shuffle_on"
         private const val DELIMITER = ","
         private const val INDEX_NONE = -1
-
-        object RepeatModeKeys {
-            const val OFF = "off"
-            const val QUEUE = "queue"
-            const val ONE = "one"
-        }
     }
+}
+
+object NowPlayingRepeatModeKeys {
+    const val OFF = "off"
+    const val QUEUE = "queue"
+    const val ONE = "one"
 }

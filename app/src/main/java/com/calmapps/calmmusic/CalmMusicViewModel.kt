@@ -13,6 +13,7 @@ import com.calmapps.calmmusic.data.CalmMusicDatabase
 import com.calmapps.calmmusic.data.LibraryRepository
 import com.calmapps.calmmusic.data.NowPlayingSnapshot
 import com.calmapps.calmmusic.data.NowPlayingStorage
+import com.calmapps.calmmusic.data.NowPlayingRepeatModeKeys
 import com.calmapps.calmmusic.playback.PlaybackCoordinator
 import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.ArtistUiModel
@@ -159,9 +160,9 @@ class CalmMusicViewModel(
         val isPlaying = state.isPlaybackPlaying
         val positionMs = state.nowPlayingPositionMs
         val repeatModeKey = when (state.repeatMode) {
-            RepeatMode.OFF -> NowPlayingStorage.RepeatModeKeys.OFF
-            RepeatMode.QUEUE -> NowPlayingStorage.RepeatModeKeys.QUEUE
-            RepeatMode.ONE -> NowPlayingStorage.RepeatModeKeys.ONE
+            RepeatMode.OFF -> NowPlayingRepeatModeKeys.OFF
+            RepeatMode.QUEUE -> NowPlayingRepeatModeKeys.QUEUE
+            RepeatMode.ONE -> NowPlayingRepeatModeKeys.ONE
         }
         val isShuffleOn = state.isShuffleOn
 
@@ -840,8 +841,8 @@ class CalmMusicViewModel(
                     val currentSong = playbackQueue[effectiveIndex]
 
                     val repeatMode = when (snapshot.repeatModeKey) {
-                        NowPlayingStorage.RepeatModeKeys.QUEUE -> RepeatMode.QUEUE
-                        NowPlayingStorage.RepeatModeKeys.ONE -> RepeatMode.ONE
+                        NowPlayingRepeatModeKeys.QUEUE -> RepeatMode.QUEUE
+                        NowPlayingRepeatModeKeys.ONE -> RepeatMode.ONE
                         else -> RepeatMode.OFF
                     }
 
