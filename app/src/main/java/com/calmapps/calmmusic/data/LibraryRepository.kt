@@ -92,11 +92,11 @@ class LibraryRepository(
                                 .mapNotNull { entity ->
                                     val id = entity.artistId ?: return@mapNotNull null
 
-                                    val name = if (entity.sourceType == "LOCAL_FILE" && id.startsWith("LOCAL_FILE:")) {
-                                        id.removePrefix("LOCAL_FILE:")
-                                    } else {
-                                        entity.artist.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                                    }
+                                    // Prefer the human-readable artist name from the song row
+                                    // for display; fall back to the ID suffix only if needed.
+                                    val name = entity.artist
+                                        .takeIf { it.isNotBlank() }
+                                        ?: id.removePrefix("LOCAL_FILE:")
 
                                     id to ArtistEntity(
                                         id = id,
@@ -113,11 +113,10 @@ class LibraryRepository(
                                 .mapNotNull { entity ->
                                     val id = entity.albumId ?: return@mapNotNull null
                                     val name = entity.album ?: return@mapNotNull null
-                                    val artistName = if (entity.sourceType == "LOCAL_FILE" && (entity.artistId ?: "").startsWith("LOCAL_FILE:")) {
-                                        entity.artistId!!.removePrefix("LOCAL_FILE:")
-                                    } else {
-                                        entity.artist
-                                    }
+
+                                    // Use the song's artist field for album display; the
+                                    // normalized artistId is only for grouping.
+                                    val artistName = entity.artist
 
                                     id to AlbumEntity(
                                         id = id,
