@@ -174,9 +174,13 @@ fun CalmMusic(app: CalmMusic) {
     val focusRequester = remember { FocusRequester() }
     val snackbarHostState = remember { SnackbarHostStateMMD() }
 
+    val settingsManager = app.settingsManager
+
     var hasOverlayPermission by rememberSaveable { mutableStateOf(Settings.canDrawOverlays(context)) }
     var hasBatteryOptimizationExemption by rememberSaveable { mutableStateOf(false) }
-    var hasCompletedPermissionsOnboarding by rememberSaveable { mutableStateOf(false) }
+    var hasCompletedPermissionsOnboarding by rememberSaveable {
+        mutableStateOf(settingsManager.hasCompletedPermissionsOnboarding())
+    }
 
     fun updateBatteryOptimizationState() {
         val powerManager = context.getSystemService(PowerManager::class.java)
@@ -231,8 +235,6 @@ fun CalmMusic(app: CalmMusic) {
     )
 
     val canNavigateBack = navController.previousBackStackEntry != null
-
-    val settingsManager = app.settingsManager
 
     var localMediaController by remember { mutableStateOf<MediaController?>(null) }
     val includeLocalMusicState = settingsManager.includeLocalMusic.collectAsState()
@@ -557,9 +559,11 @@ fun CalmMusic(app: CalmMusic) {
             },
             onContinueClick = {
                 hasCompletedPermissionsOnboarding = true
+                settingsManager.setHasCompletedPermissionsOnboarding(true)
             },
             onSkipClick = {
                 hasCompletedPermissionsOnboarding = true
+                settingsManager.setHasCompletedPermissionsOnboarding(true)
             },
         )
         return

@@ -1,6 +1,8 @@
 package com.calmapps.calmmusic
 
 import android.app.Application
+import android.content.Intent
+import android.provider.Settings
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -11,6 +13,7 @@ import com.apple.android.sdk.authentication.AuthenticationManager
 import com.calmapps.calmmusic.data.CalmMusicSettingsManager
 import com.calmapps.calmmusic.data.NowPlayingStorage
 import com.calmapps.calmmusic.data.PlaybackStateManager
+import com.calmapps.calmmusic.overlay.SystemOverlayService
 
 class CalmMusic : Application(), DefaultLifecycleObserver {
 
@@ -84,5 +87,12 @@ class CalmMusic : Application(), DefaultLifecycleObserver {
 
     override fun onStop(owner: LifecycleOwner) {
         playbackStateManager.setAppForegroundState(false)
+
+        val overlayState = playbackStateManager.state.value
+        val hasOverlayPermission = Settings.canDrawOverlays(this)
+        if (hasOverlayPermission && overlayState.songId != null) {
+            val intent = Intent(this, SystemOverlayService::class.java)
+            startService(intent)
+        }
     }
 }

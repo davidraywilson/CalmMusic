@@ -185,6 +185,27 @@ class CalmMusicViewModel(
         val song = state.nowPlayingSong ?: return
         val currentlyPlaying = state.isPlaybackPlaying
 
+        if (!currentlyPlaying) {
+            val queue = state.playbackQueue
+            val index = state.playbackQueueIndex
+
+            val needsInit = when (song.sourceType) {
+                "APPLE_MUSIC" -> !playbackCoordinator.appleQueueInitialized
+                "LOCAL_FILE" -> !playbackCoordinator.localQueueInitialized
+                else -> false
+            }
+
+            if (needsInit && queue.isNotEmpty() && index != null && index in queue.indices) {
+                startPlaybackFromQueue(
+                    queue = queue,
+                    startIndex = index,
+                    isNewQueue = false,
+                    localController = localController,
+                )
+                return
+            }
+        }
+
         if (currentlyPlaying) {
             if (song.sourceType == "APPLE_MUSIC") {
                 app.appleMusicPlayer.pause()
