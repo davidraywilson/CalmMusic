@@ -204,7 +204,7 @@ fun CalmMusic(app: CalmMusic) {
     LaunchedEffect(hasOverlayPermission) {
         if (hasOverlayPermission) {
             val intent = Intent(appContext, SystemOverlayService::class.java)
-            ContextCompat.startForegroundService(appContext, intent)
+            appContext.startService(intent)
         }
     }
 

@@ -87,8 +87,10 @@ class LibraryRepository(
 
                         onIngestProgress(0f)
 
+                        val normalizedLocalEntities = normalizeLocalSongIds(localEntities)
+
                         withContext(Dispatchers.IO) {
-                            val artistEntities: List<ArtistEntity> = localEntities
+                            val artistEntities: List<ArtistEntity> = normalizedLocalEntities
                                 .mapNotNull { entity ->
                                     val id = entity.artistId ?: return@mapNotNull null
 
@@ -109,7 +111,7 @@ class LibraryRepository(
 
                             onIngestProgress(0.1f)
 
-                            val albumEntities: List<AlbumEntity> = localEntities
+                            val albumEntities: List<AlbumEntity> = normalizedLocalEntities
                                 .mapNotNull { entity ->
                                     val id = entity.albumId ?: return@mapNotNull null
                                     val name = entity.album ?: return@mapNotNull null
@@ -131,7 +133,7 @@ class LibraryRepository(
 
                             onIngestProgress(0.2f)
 
-                            if (localEntities.isEmpty() && albumEntities.isEmpty() && artistEntities.isEmpty()) {
+                            if (normalizedLocalEntities.isEmpty() && albumEntities.isEmpty() && artistEntities.isEmpty()) {
                                 onIngestProgress(1f)
                                 songDao.deleteBySourceType("LOCAL_FILE")
                                 albumDao.deleteBySourceType("LOCAL_FILE")
@@ -140,7 +142,7 @@ class LibraryRepository(
                             }
 
                             val existingById = existingLocalSongs.associateBy { it.id }
-                            val scannedById = localEntities.associateBy { it.id }
+                            val scannedById = normalizedLocalEntities.associateBy { it.id }
 
                             val songsToDelete = existingById.keys - scannedById.keys
                             val songsToUpsert = scannedById.values.filter { newEntity ->
@@ -148,7 +150,7 @@ class LibraryRepository(
                                 existing == null || existing != newEntity
                             }
 
-                            val totalDiscovered = localEntities.size
+                            val totalDiscovered = normalizedLocalEntities.size
                             val indexedNewOrUpdated = songsToUpsert.size
                             val skippedUnchanged = (totalDiscovered - indexedNewOrUpdated).coerceAtLeast(0)
                             val deletedMissing = songsToDelete.size
@@ -285,6 +287,41 @@ class LibraryRepository(
                 artists = emptyList(),
                 errorMessage = message,
                 stats = null,
+            )
+        }
+    }
+
+    /**
+     * Ensure that all LOCAL_FILE songs have consistent, normalized artistId and
+     * albumId values derived from their display artist/album names. This avoids
+     * creating duplicate artists/albums when ID generation logic evolves over
+     * time or when some rows were previously ingested with older rules.
+     */
+    private fun normalizeLocalSongIds(entities: List<SongEntity>): List<SongEntity> {
+        return entities.map { entity ->
+            if (entity.sourceType != "LOCAL_FILE") return@map entity
+
+            if (entity.artistId != null || entity.albumId != null) return@map entity
+
+            val artistName = entity.artist.trim()
+            val albumName = entity.album?.trim().orEmpty()
+
+            fun String.toIdComponent(): String =
+                trim()
+                    .replace(Regex("\\s+"), " ")
+                    .lowercase()
+
+            val artistKey = artistName.takeIf { it.isNotBlank() }?.toIdComponent()
+            val albumKey = albumName.takeIf { it.isNotBlank() }?.toIdComponent()
+
+            val artistId = artistKey?.let { "LOCAL_FILE:$it" }
+            val albumId = if (artistKey != null && albumKey != null) {
+                "LOCAL_FILE:" + artistKey + ":" + albumKey
+            } else null
+
+            entity.copy(
+                artistId = artistId,
+                albumId = albumId,
             )
         }
     }
