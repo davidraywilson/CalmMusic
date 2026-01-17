@@ -11,6 +11,8 @@ import androidx.media3.session.MediaController
 import com.apple.android.music.playback.model.PlaybackRepeatMode
 import com.calmapps.calmmusic.data.CalmMusicDatabase
 import com.calmapps.calmmusic.data.LibraryRepository
+import com.calmapps.calmmusic.data.NowPlayingSnapshot
+import com.calmapps.calmmusic.data.NowPlayingStorage
 import com.calmapps.calmmusic.playback.PlaybackCoordinator
 import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.ArtistUiModel
@@ -43,6 +45,7 @@ class CalmMusicViewModel(
     private val artistDao by lazy { database.artistDao() }
     private val playlistDao by lazy { database.playlistDao() }
     private val libraryRepository: LibraryRepository by lazy { LibraryRepository(app) }
+    private val nowPlayingStorage: NowPlayingStorage by lazy { app.nowPlayingStorage }
 
     private val playbackCoordinator = PlaybackCoordinator()
     private var localPlaybackMonitorJob: Job? = null
@@ -150,6 +153,32 @@ class CalmMusicViewModel(
         playbackCoordinator.rebuildPlaybackSubqueues(queue)
     }
 
+    private fun persistPlaybackSnapshot(state: PlaybackState = _playbackState.value) {
+        val queueIds = state.playbackQueue.map { it.id }
+        val index = state.playbackQueueIndex
+        val isPlaying = state.isPlaybackPlaying
+        val positionMs = state.nowPlayingPositionMs
+        val repeatModeKey = when (state.repeatMode) {
+            RepeatMode.OFF -> NowPlayingStorage.RepeatModeKeys.OFF
+            RepeatMode.QUEUE -> NowPlayingStorage.RepeatModeKeys.QUEUE
+            RepeatMode.ONE -> NowPlayingStorage.RepeatModeKeys.ONE
+        }
+        val isShuffleOn = state.isShuffleOn
+
+        viewModelScope.launch(Dispatchers.IO) {
+            nowPlayingStorage.save(
+                NowPlayingSnapshot(
+                    queueSongIds = queueIds,
+                    currentIndex = index,
+                    isPlaying = isPlaying,
+                    positionMs = positionMs,
+                    repeatModeKey = repeatModeKey,
+                    isShuffleOn = isShuffleOn,
+                )
+            )
+        }
+    }
+
     fun togglePlayback(localController: MediaController?) {
         val state = _playbackState.value
         val song = state.nowPlayingSong ?: return
@@ -170,6 +199,7 @@ class CalmMusicViewModel(
         }
 
         _playbackState.value = state.copy(isPlaybackPlaying = !currentlyPlaying)
+        persistPlaybackSnapshot()
     }
 
     fun startPlaybackFromQueue(
@@ -200,6 +230,7 @@ class CalmMusicViewModel(
             nowPlayingPositionMs = 0L,
             nowPlayingDurationMs = song.durationMillis ?: 0L,
         )
+        persistPlaybackSnapshot()
 
         if (song.sourceType == "APPLE_MUSIC") {
             val appleIndex = playbackCoordinator.appleIndexByGlobal?.let { map ->
@@ -292,6 +323,7 @@ class CalmMusicViewModel(
             nowPlayingPositionMs = 0L,
             isPlaybackPlaying = true,
         )
+        persistPlaybackSnapshot()
 
         when (nextSong.sourceType) {
             "APPLE_MUSIC" -> {
@@ -387,6 +419,7 @@ class CalmMusicViewModel(
             nowPlayingPositionMs = 0L,
             isPlaybackPlaying = true,
         )
+        persistPlaybackSnapshot()
 
         when (prevSong.sourceType) {
             "APPLE_MUSIC" -> {
@@ -478,6 +511,7 @@ class CalmMusicViewModel(
                 currentSongId = current.id,
                 nowPlayingSong = current,
             )
+            persistPlaybackSnapshot()
 
             if (current.sourceType == "APPLE_MUSIC") {
                 val appleSongs = newQueue.filter { it.sourceType == "APPLE_MUSIC" }
@@ -509,6 +543,7 @@ class CalmMusicViewModel(
         } else {
             if (state.originalPlaybackQueue.isEmpty()) {
                 _playbackState.value = state.copy(isShuffleOn = false)
+                persistPlaybackSnapshot()
                 return
             }
 
@@ -529,6 +564,7 @@ class CalmMusicViewModel(
                 nowPlayingDurationMs = restoredCurrent.durationMillis ?: state.nowPlayingDurationMs,
                 nowPlayingPositionMs = 0L,
             )
+            persistPlaybackSnapshot()
 
             if (restoredCurrent.sourceType == "APPLE_MUSIC") {
                 val appleSongs = restoreQueue.filter { it.sourceType == "APPLE_MUSIC" }
@@ -571,6 +607,7 @@ class CalmMusicViewModel(
         }
 
         _playbackState.value = state.copy(repeatMode = newRepeat)
+        persistPlaybackSnapshot()
 
         val song = state.nowPlayingSong
         if (song?.sourceType == "LOCAL_FILE") {
@@ -594,6 +631,7 @@ class CalmMusicViewModel(
     fun updateFromAppleQueueIndex(appleQueueIndex: Int?) {
         if (appleQueueIndex == null || appleQueueIndex < 0) {
             _playbackState.value = _playbackState.value.copy(isPlaybackPlaying = false)
+            persistPlaybackSnapshot()
             return
         }
         val state = _playbackState.value
@@ -614,6 +652,7 @@ class CalmMusicViewModel(
                 nowPlayingPositionMs = 0L,
                 isPlaybackPlaying = true,
             )
+            persistPlaybackSnapshot()
         }
     }
 
@@ -673,6 +712,7 @@ class CalmMusicViewModel(
 
                 if (newState != state) {
                     _playbackState.value = newState
+                    persistPlaybackSnapshot(newState)
                 }
 
                 val nextDelayMs = when {
@@ -774,6 +814,52 @@ class CalmMusicViewModel(
                     songCount = playlist.songCount,
                 )
             }
+
+            // Attempt to restore a previously saved now-playing snapshot.
+            val snapshot = withContext(Dispatchers.IO) { nowPlayingStorage.load() }
+            if (snapshot != null) {
+                val songsById = allSongs.associateBy { it.id }
+                val queueEntities = snapshot.queueSongIds.mapNotNull { songsById[it] }
+                if (queueEntities.isNotEmpty()) {
+                    val playbackQueue = queueEntities.map { entity ->
+                        SongUiModel(
+                            id = entity.id,
+                            title = entity.title,
+                            artist = entity.artist,
+                            durationText = formatDurationMillis(entity.durationMillis),
+                            durationMillis = entity.durationMillis,
+                            trackNumber = entity.trackNumber,
+                            sourceType = entity.sourceType,
+                            audioUri = entity.audioUri,
+                            album = entity.album,
+                        )
+                    }
+
+                    val indexFromSnapshot = snapshot.currentIndex
+                    val effectiveIndex = indexFromSnapshot?.takeIf { it in playbackQueue.indices } ?: 0
+                    val currentSong = playbackQueue[effectiveIndex]
+
+                    val repeatMode = when (snapshot.repeatModeKey) {
+                        NowPlayingStorage.RepeatModeKeys.QUEUE -> RepeatMode.QUEUE
+                        NowPlayingStorage.RepeatModeKeys.ONE -> RepeatMode.ONE
+                        else -> RepeatMode.OFF
+                    }
+
+                    _playbackState.value = PlaybackState(
+                        playbackQueue = playbackQueue,
+                        playbackQueueIndex = effectiveIndex,
+                        originalPlaybackQueue = if (snapshot.isShuffleOn) playbackQueue else emptyList(),
+                        repeatMode = repeatMode,
+                        isShuffleOn = snapshot.isShuffleOn,
+                        currentSongId = currentSong.id,
+                        nowPlayingSong = currentSong,
+                        isPlaybackPlaying = snapshot.isPlaying,
+                        nowPlayingPositionMs = snapshot.positionMs,
+                        nowPlayingDurationMs = currentSong.durationMillis ?: 0L,
+                    )
+                }
+            }
+
             _isLoadingSongs.value = false
             _isLoadingAlbums.value = false
         }

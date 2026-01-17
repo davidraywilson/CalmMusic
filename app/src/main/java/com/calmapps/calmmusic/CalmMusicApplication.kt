@@ -9,6 +9,7 @@ import com.apple.android.music.playback.controller.MediaPlayerControllerFactory
 import com.apple.android.sdk.authentication.AuthenticationFactory
 import com.apple.android.sdk.authentication.AuthenticationManager
 import com.calmapps.calmmusic.data.CalmMusicSettingsManager
+import com.calmapps.calmmusic.data.NowPlayingStorage
 import com.calmapps.calmmusic.data.PlaybackStateManager
 
 class CalmMusic : Application(), DefaultLifecycleObserver {
@@ -56,6 +57,10 @@ class CalmMusic : Application(), DefaultLifecycleObserver {
 
     val playbackStateManager: PlaybackStateManager by lazy {
         PlaybackStateManager()
+    }
+
+    val nowPlayingStorage: NowPlayingStorage by lazy {
+        NowPlayingStorage(this)
     }
 
     lateinit var settingsManager: CalmMusicSettingsManager

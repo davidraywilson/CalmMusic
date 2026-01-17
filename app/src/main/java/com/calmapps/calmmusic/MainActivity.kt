@@ -42,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,6 +81,7 @@ import com.calmapps.calmmusic.ui.AlbumsScreen
 import com.calmapps.calmmusic.ui.ArtistDetailsScreen
 import com.calmapps.calmmusic.ui.ArtistsScreen
 import com.calmapps.calmmusic.ui.NowPlayingScreen
+import com.calmapps.calmmusic.ui.PermissionsOnboardingScreen
 import com.calmapps.calmmusic.ui.PlaylistAddSongsScreen
 import com.calmapps.calmmusic.ui.PlaylistDetailsScreen
 import com.calmapps.calmmusic.ui.PlaylistEditScreen
@@ -139,17 +141,6 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // Ensure foreground state is correct when activity is resumed
         app.playbackStateManager.setAppForegroundState(true)
-        checkOverlayPermission()
-    }
-
-    private fun checkOverlayPermission() {
-        if (!Settings.canDrawOverlays(this)) {
-            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                "package:$packageName".toUri())
-            startActivity(intent)
-        } else {
-            startService(Intent(this, SystemOverlayService::class.java))
-        }
     }
 
     @Deprecated("Use Activity Result API")
@@ -169,16 +160,59 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalmMusic(app: CalmMusic) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
-    val activity = LocalContext.current as? Activity
-    val appContext = LocalContext.current.applicationContext
+    val activity = context as? Activity
+    val appContext = context.applicationContext
     val searchScope = rememberCoroutineScope()
     val playlistScope = rememberCoroutineScope()
     val libraryScope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
     val snackbarHostState = remember { SnackbarHostStateMMD() }
+
+    var hasOverlayPermission by rememberSaveable { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var hasBatteryOptimizationExemption by rememberSaveable { mutableStateOf(false) }
+    var hasCompletedPermissionsOnboarding by rememberSaveable { mutableStateOf(false) }
+
+    fun updateBatteryOptimizationState() {
+        val powerManager = context.getSystemService(PowerManager::class.java)
+        hasBatteryOptimizationExemption =
+            powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true
+    }
+
+    LaunchedEffect(Unit) {
+        updateBatteryOptimizationState()
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasOverlayPermission = Settings.canDrawOverlays(context)
+                updateBatteryOptimizationState()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(hasOverlayPermission) {
+        if (hasOverlayPermission) {
+            val intent = Intent(appContext, SystemOverlayService::class.java)
+            ContextCompat.startForegroundService(appContext, intent)
+        }
+    }
+
+    val shouldShowPermissionsOnboarding by remember {
+        derivedStateOf {
+            !hasCompletedPermissionsOnboarding
+        }
+    }
 
     val viewModel: CalmMusicViewModel = viewModel(factory = CalmMusicViewModel.factory(app))
     val playbackState by viewModel.playbackState.collectAsState()
@@ -492,6 +526,43 @@ fun CalmMusic(app: CalmMusic) {
         app.appleMusicPlayer.setOnCurrentItemChangedListener { appleQueueIndex ->
             viewModel.updateFromAppleQueueIndex(appleQueueIndex)
         }
+    }
+
+    if (shouldShowPermissionsOnboarding) {
+        PermissionsOnboardingScreen(
+            hasOverlayPermission = hasOverlayPermission,
+            hasBatteryOptimizationExemption = hasBatteryOptimizationExemption,
+            onRequestOverlayPermissionClick = {
+                if (!Settings.canDrawOverlays(context)) {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        "package:${context.packageName}".toUri(),
+                    ).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                }
+            },
+            onRequestBatteryOptimizationClick = {
+                val powerManager = context.getSystemService(PowerManager::class.java)
+                if (powerManager != null &&
+                    !powerManager.isIgnoringBatteryOptimizations(context.packageName)
+                ) {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = "package:${context.packageName}".toUri()
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                }
+            },
+            onContinueClick = {
+                hasCompletedPermissionsOnboarding = true
+            },
+            onSkipClick = {
+                hasCompletedPermissionsOnboarding = true
+            },
+        )
+        return
     }
 
     LaunchedEffect(isAuthenticated) {
