@@ -3,7 +3,6 @@ package com.calmapps.calmmusic
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
@@ -60,6 +59,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.navigation.NavDestination
+import androidx.navigation.NavGraphBuilder
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -68,8 +68,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.apple.android.music.playback.model.PlaybackRepeatMode
-import com.calmapps.calmmusic.data.AlbumEntity
-import com.calmapps.calmmusic.data.ArtistEntity
 import com.calmapps.calmmusic.data.CalmMusicDatabase
 import com.calmapps.calmmusic.data.PlaylistEntity
 import com.calmapps.calmmusic.data.PlaylistTrackEntity
@@ -80,7 +78,6 @@ import com.calmapps.calmmusic.ui.AlbumDetailsScreen
 import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.AlbumsScreen
 import com.calmapps.calmmusic.ui.ArtistDetailsScreen
-import com.calmapps.calmmusic.ui.ArtistUiModel
 import com.calmapps.calmmusic.ui.ArtistsScreen
 import com.calmapps.calmmusic.ui.NowPlayingScreen
 import com.calmapps.calmmusic.ui.PlaylistAddSongsScreen
@@ -106,14 +103,8 @@ import com.mudita.mmd.components.snackbar.SnackbarDurationMMD
 import com.mudita.mmd.components.snackbar.SnackbarHostMMD
 import com.mudita.mmd.components.snackbar.SnackbarHostStateMMD
 import com.mudita.mmd.components.text.TextMMD
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -153,7 +144,8 @@ class MainActivity : ComponentActivity() {
 
     private fun checkOverlayPermission() {
         if (!Settings.canDrawOverlays(this)) {
-            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                "package:$packageName".toUri())
             startActivity(intent)
         } else {
             startService(Intent(this, SystemOverlayService::class.java))
@@ -165,7 +157,7 @@ class MainActivity : ComponentActivity() {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == REQUEST_CODE_APPLE_MUSIC_AUTH && resultCode == RESULT_OK) {
-            val success = app.appleMusicAuthManager.handleAuthResult(data)
+            app.appleMusicAuthManager.handleAuthResult(data)
         }
     }
 
@@ -174,7 +166,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalmMusic(app: CalmMusic) {
     val navController = rememberNavController()
@@ -189,7 +181,9 @@ fun CalmMusic(app: CalmMusic) {
     val snackbarHostState = remember { SnackbarHostStateMMD() }
 
     val viewModel: CalmMusicViewModel = viewModel(factory = CalmMusicViewModel.factory(app))
-    val playbackCoordinator = remember { PlaybackCoordinator() }
+    val playbackState by viewModel.playbackState.collectAsState()
+
+    val playlistsViewModel: PlaylistsViewModel = viewModel(factory = PlaylistsViewModel.factory(app))
 
     // Bottom sheet states
     val addToPlaylistSheetState: SheetStateMMD = rememberModalBottomSheetMMDState(
@@ -205,14 +199,8 @@ fun CalmMusic(app: CalmMusic) {
     val canNavigateBack = navController.previousBackStackEntry != null
 
     val settingsManager = app.settingsManager
-    val database = remember { CalmMusicDatabase.getDatabase(app) }
-    val songDao = remember { database.songDao() }
-    val albumDao = remember { database.albumDao() }
-    val artistDao = remember { database.artistDao() }
-    val playlistDao = remember { database.playlistDao() }
 
     var localMediaController by remember { mutableStateOf<MediaController?>(null) }
-
     val includeLocalMusicState = settingsManager.includeLocalMusic.collectAsState()
     val localMusicFoldersState = settingsManager.localMusicFolders.collectAsState()
     val includeLocalMusic = includeLocalMusicState.value
@@ -223,14 +211,13 @@ fun CalmMusic(app: CalmMusic) {
     val librarySongs by viewModel.librarySongs.collectAsState()
     val libraryAlbums by viewModel.libraryAlbums.collectAsState()
     val libraryArtists by viewModel.libraryArtists.collectAsState()
-    val libraryPlaylistsState by viewModel.libraryPlaylists.collectAsState()
+    val libraryPlaylistsState by playlistsViewModel.playlists.collectAsState()
     val isLoadingSongs by viewModel.isLoadingSongs.collectAsState()
     val isLoadingAlbums by viewModel.isLoadingAlbums.collectAsState()
 
     var libraryPlaylists by remember { mutableStateOf<List<PlaylistUiModel>>(emptyList()) }
     var songsError by remember { mutableStateOf<String?>(null) }
     var albumsError by remember { mutableStateOf<String?>(null) }
-    var playlistsError by remember { mutableStateOf<String?>(null) }
 
     var selectedAlbum by remember { mutableStateOf<AlbumUiModel?>(null) }
 
@@ -249,19 +236,11 @@ fun CalmMusic(app: CalmMusic) {
 
     var selectedArtist by remember { mutableStateOf<String?>(null) }
 
-    // Playback state
-    var playbackQueue by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
-    var playbackQueueIndex by remember { mutableStateOf<Int?>(null) }
-    var originalPlaybackQueue by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
+    val playbackQueue = playbackState.playbackQueue
+    val currentSongId = playbackState.currentSongId
+    val nowPlayingSong = playbackState.nowPlayingSong
+    var isPlaybackPlaying = playbackState.isPlaybackPlaying
 
-    var repeatMode by remember { mutableStateOf(RepeatMode.OFF) }
-    var isShuffleOn by remember { mutableStateOf(false) }
-
-    var currentSongId by remember { mutableStateOf<String?>(null) }
-    var nowPlayingSong by remember { mutableStateOf<SongUiModel?>(null) }
-    var isPlaybackPlaying by remember { mutableStateOf(false) }
-    var nowPlayingPositionMs by remember { mutableStateOf(0L) }
-    var nowPlayingDurationMs by remember { mutableStateOf(0L) }
     var showNowPlaying by remember { mutableStateOf(false) }
     var showAddToPlaylistDialog by remember { mutableStateOf(false) }
     var pendingAddToNewPlaylistSong by remember { mutableStateOf<SongUiModel?>(null) }
@@ -381,25 +360,9 @@ fun CalmMusic(app: CalmMusic) {
         }
     }
 
-    fun rebuildPlaybackSubqueues(queue: List<SongUiModel>) {
-        playbackCoordinator.rebuildPlaybackSubqueues(queue)
-    }
-
     fun togglePlayback() {
         val song = nowPlayingSong ?: return
-        if (isPlaybackPlaying) {
-            if (song.sourceType == "APPLE_MUSIC") {
-                app.appleMusicPlayer.pause()
-            } else {
-                localMediaController?.pause()
-            }
-        } else {
-            if (song.sourceType == "APPLE_MUSIC") {
-                app.appleMusicPlayer.resume()
-            } else {
-                localMediaController?.playWhenReady = true
-            }
-        }
+        viewModel.togglePlayback(localMediaController)
         isPlaybackPlaying = !isPlaybackPlaying
     }
 
@@ -410,68 +373,12 @@ fun CalmMusic(app: CalmMusic) {
     ) {
         if (queue.isEmpty() || startIndex !in queue.indices) return
 
-        if (isNewQueue) {
-            originalPlaybackQueue = queue
-            isShuffleOn = false
-        }
-
-        rebuildPlaybackSubqueues(queue)
-        playbackQueue = queue
-        playbackQueueIndex = startIndex
-
-        val song = queue[startIndex]
-        currentSongId = song.id
-        nowPlayingSong = song
-        isPlaybackPlaying = true
-        nowPlayingPositionMs = 0L
-        nowPlayingDurationMs = song.durationMillis ?: 0L
-
-        if (song.sourceType == "APPLE_MUSIC") {
-            val appleIndex = playbackCoordinator.appleIndexByGlobal?.let { map ->
-                if (startIndex in map.indices) map[startIndex] else -1
-            }?.takeIf { it >= 0 }
-
-            if (playbackCoordinator.appleCatalogIdsForQueue.isNotEmpty() && appleIndex != null) {
-                app.appleMusicPlayer.playQueueOfSongs(
-                    playbackCoordinator.appleCatalogIdsForQueue,
-                    appleIndex
-                )
-                playbackCoordinator.appleQueueInitialized = true
-            } else {
-                app.appleMusicPlayer.playSongById(song.audioUri ?: song.id)
-                playbackCoordinator.appleQueueInitialized = false
-            }
-
-            val repeat = when (repeatMode) {
-                RepeatMode.OFF -> PlaybackRepeatMode.REPEAT_MODE_OFF
-                RepeatMode.QUEUE -> PlaybackRepeatMode.REPEAT_MODE_ALL
-                RepeatMode.ONE -> PlaybackRepeatMode.REPEAT_MODE_ONE
-            }
-            app.mediaPlayerController.setRepeatMode(repeat)
-        } else if (song.sourceType == "LOCAL_FILE") {
-            val controller = localMediaController
-            if (controller != null && playbackCoordinator.localMediaItemsForQueue.isNotEmpty()) {
-                val localIndex = playbackCoordinator.localIndexByGlobal?.let { map ->
-                    if (startIndex in map.indices) map[startIndex] else -1
-                }?.takeIf { it >= 0 } ?: 0
-
-                controller.setMediaItems(
-                    playbackCoordinator.localMediaItemsForQueue,
-                    localIndex,
-                    0L
-                )
-
-                controller.repeatMode = when (repeatMode) {
-                    RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                    RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
-                    RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-                }
-
-                controller.prepare()
-                controller.playWhenReady = true
-                playbackCoordinator.localQueueInitialized = true
-            }
-        }
+        viewModel.startPlaybackFromQueue(
+            queue = queue,
+            startIndex = startIndex,
+            isNewQueue = isNewQueue,
+            localController = localMediaController,
+        )
 
         showNowPlaying = true
     }
@@ -479,325 +386,19 @@ fun CalmMusic(app: CalmMusic) {
     fun startShuffledPlaybackFromQueue(queue: List<SongUiModel>) {
         if (queue.isEmpty()) return
 
-        val shuffledQueue = queue.shuffled()
-        originalPlaybackQueue = queue
-        isShuffleOn = true
-        startPlaybackFromQueue(shuffledQueue, 0, isNewQueue = false)
-    }
+        viewModel.startShuffledPlaybackFromQueue(
+            queue = queue,
+            localController = localMediaController,
+        )
 
-    fun playNextInQueue() {
-        val queue = playbackQueue
-        if (queue.isEmpty()) return
-
-        val currentIndex = playbackQueueIndex ?: return
-        if (currentIndex !in queue.indices) return
-
-        val targetIndex = when {
-            currentIndex < queue.lastIndex -> currentIndex + 1
-            currentIndex == queue.lastIndex && repeatMode == RepeatMode.QUEUE -> 0
-            repeatMode == RepeatMode.ONE -> currentIndex
-            else -> return
-        }
-
-        val nextSong = queue[targetIndex]
-        playbackQueueIndex = targetIndex
-        currentSongId = nextSong.id
-        nowPlayingSong = nextSong
-        nowPlayingDurationMs = nextSong.durationMillis ?: nowPlayingDurationMs
-        nowPlayingPositionMs = 0L
-        isPlaybackPlaying = true
-
-        val currentSong = queue[currentIndex]
-
-        when (nextSong.sourceType) {
-            "APPLE_MUSIC" -> {
-                val map = playbackCoordinator.appleIndexByGlobal
-                val newAppleIndex = map?.let {
-                    if (targetIndex in it.indices) it[targetIndex] else -1
-                }?.takeIf { it >= 0 }
-
-                if (newAppleIndex == null || playbackCoordinator.appleCatalogIdsForQueue.isEmpty()) {
-                    startPlaybackFromQueue(playbackQueue, targetIndex, isNewQueue = false)
-                    return
-                }
-
-                localMediaController?.playWhenReady = false
-
-                val oldAppleIndex =
-                    if (currentSong.sourceType == "APPLE_MUSIC" && map != null && currentIndex in map.indices) {
-                        map[currentIndex].takeIf { it >= 0 }
-                    } else {
-                        null
-                    }
-
-                if (playbackCoordinator.appleQueueInitialized && oldAppleIndex != null && newAppleIndex == oldAppleIndex + 1) {
-                    app.appleMusicPlayer.skipToNextItem()
-                } else {
-                    app.appleMusicPlayer.playQueueOfSongs(
-                        playbackCoordinator.appleCatalogIdsForQueue,
-                        newAppleIndex
-                    )
-                    playbackCoordinator.appleQueueInitialized = true
-                }
-            }
-
-            "LOCAL_FILE" -> {
-                val controller = localMediaController
-                val map = playbackCoordinator.localIndexByGlobal
-                val localIndex = map?.let {
-                    if (targetIndex in it.indices) it[targetIndex] else -1
-                }?.takeIf { it >= 0 }
-
-                if (controller == null || localIndex == null || playbackCoordinator.localMediaItemsForQueue.isEmpty()) {
-                    startPlaybackFromQueue(playbackQueue, targetIndex, isNewQueue = false)
-                    return
-                }
-
-                app.appleMusicPlayer.pause()
-
-                if (!playbackCoordinator.localQueueInitialized) {
-                    controller.setMediaItems(
-                        playbackCoordinator.localMediaItemsForQueue,
-                        localIndex,
-                        0L
-                    )
-                    controller.repeatMode = when (repeatMode) {
-                        RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                        RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
-                        RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-                    }
-                    controller.prepare()
-                    controller.playWhenReady = true
-                    playbackCoordinator.localQueueInitialized = true
-                } else {
-                    controller.seekTo(localIndex, 0L)
-                    controller.playWhenReady = true
-                }
-            }
-        }
-    }
-
-    fun playPreviousInQueue() {
-        val queue = playbackQueue
-        if (queue.isEmpty()) return
-
-        val currentIndex = playbackQueueIndex ?: return
-        if (currentIndex !in queue.indices) return
-
-        val targetIndex = when {
-            currentIndex > 0 -> currentIndex - 1
-            currentIndex == 0 && repeatMode == RepeatMode.QUEUE -> queue.lastIndex
-            repeatMode == RepeatMode.ONE -> currentIndex
-            else -> return
-        }
-
-        val prevSong = queue[targetIndex]
-        playbackQueueIndex = targetIndex
-        currentSongId = prevSong.id
-        nowPlayingSong = prevSong
-        nowPlayingDurationMs = prevSong.durationMillis ?: nowPlayingDurationMs
-        nowPlayingPositionMs = 0L
-        isPlaybackPlaying = true
-
-        val currentSong = queue[currentIndex]
-
-        when (prevSong.sourceType) {
-            "APPLE_MUSIC" -> {
-                val map = playbackCoordinator.appleIndexByGlobal
-                val newAppleIndex = map?.let {
-                    if (targetIndex in it.indices) it[targetIndex] else -1
-                }?.takeIf { it >= 0 }
-
-                if (newAppleIndex == null || playbackCoordinator.appleCatalogIdsForQueue.isEmpty()) {
-                    startPlaybackFromQueue(playbackQueue, targetIndex, isNewQueue = false)
-                    return
-                }
-
-                localMediaController?.playWhenReady = false
-
-                val oldAppleIndex =
-                    if (currentSong.sourceType == "APPLE_MUSIC" && map != null && currentIndex in map.indices) {
-                        map[currentIndex].takeIf { it >= 0 }
-                    } else {
-                        null
-                    }
-
-                if (playbackCoordinator.appleQueueInitialized && oldAppleIndex != null && newAppleIndex == oldAppleIndex - 1) {
-                    app.appleMusicPlayer.skipToPreviousItem()
-                } else {
-                    app.appleMusicPlayer.playQueueOfSongs(
-                        playbackCoordinator.appleCatalogIdsForQueue,
-                        newAppleIndex
-                    )
-                    playbackCoordinator.appleQueueInitialized = true
-                }
-            }
-
-            "LOCAL_FILE" -> {
-                val controller = localMediaController
-                val map = playbackCoordinator.localIndexByGlobal
-                val localIndex = map?.let {
-                    if (targetIndex in it.indices) it[targetIndex] else -1
-                }?.takeIf { it >= 0 }
-
-                if (controller == null || localIndex == null || playbackCoordinator.localMediaItemsForQueue.isEmpty()) {
-                    startPlaybackFromQueue(playbackQueue, targetIndex, isNewQueue = false)
-                    return
-                }
-
-                app.appleMusicPlayer.pause()
-
-                if (!playbackCoordinator.localQueueInitialized) {
-                    controller.setMediaItems(
-                        playbackCoordinator.localMediaItemsForQueue,
-                        localIndex,
-                        0L
-                    )
-                    controller.repeatMode = when (repeatMode) {
-                        RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                        RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
-                        RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-                    }
-                    controller.prepare()
-                    controller.playWhenReady = true
-                    playbackCoordinator.localQueueInitialized = true
-                } else {
-                    controller.seekTo(localIndex, 0L)
-                    controller.playWhenReady = true
-                }
-            }
-        }
-    }
-
-    fun toggleShuffleMode() {
-        val index = playbackQueueIndex ?: return
-        if (playbackQueue.isEmpty() || index !in playbackQueue.indices) return
-        val current = nowPlayingSong ?: return
-
-        if (!isShuffleOn) {
-            isShuffleOn = true
-            val queue = playbackQueue
-            if (queue.size <= 1) return
-
-            val remaining = (queue.take(index) + queue.drop(index + 1)).shuffled()
-            val newQueue = listOf(current) + remaining
-
-            playbackQueue = newQueue
-            playbackQueueIndex = 0
-            currentSongId = current.id
-            nowPlayingSong = current
-
-            if (current.sourceType == "APPLE_MUSIC") {
-                val appleSongs = newQueue.filter { it.sourceType == "APPLE_MUSIC" }
-                val appleIds = appleSongs.map { it.audioUri ?: it.id }
-                val appleIndex =
-                    appleSongs.indexOfFirst { it.id == current.id }.takeIf { it >= 0 } ?: 0
-                if (appleIds.isNotEmpty()) {
-                    app.appleMusicPlayer.playQueueOfSongs(appleIds, appleIndex)
-                } else {
-                    app.appleMusicPlayer.playSongById(current.audioUri ?: current.id)
-                }
-                isPlaybackPlaying = true
-            } else if (current.sourceType == "LOCAL_FILE") {
-                val controller = localMediaController ?: return
-                val localSongs = newQueue
-                    .filter { it.sourceType == "LOCAL_FILE" && !it.audioUri.isNullOrBlank() }
-                if (localSongs.isEmpty()) return
-
-                val mediaItems = localSongs.map { MediaItem.fromUri(it.audioUri!!) }
-                val targetUri = current.audioUri ?: current.id
-                val localStartIndex =
-                    mediaItems.indexOfFirst { it.localConfiguration?.uri.toString() == targetUri }
-                        .takeIf { it >= 0 } ?: 0
-
-                controller.setMediaItems(mediaItems, localStartIndex, 0L)
-                controller.prepare()
-                controller.playWhenReady = true
-                isPlaybackPlaying = true
-            }
-        } else {
-            if (originalPlaybackQueue.isEmpty()) {
-                isShuffleOn = false
-                return
-            }
-
-            val restoreQueue = originalPlaybackQueue
-            val originalIndex = restoreQueue.indexOfFirst { it.id == current.id }
-                .takeIf { it >= 0 } ?: 0
-
-            isShuffleOn = false
-            playbackQueue = restoreQueue
-            playbackQueueIndex = originalIndex
-
-            val restoredCurrent = restoreQueue[originalIndex]
-            currentSongId = restoredCurrent.id
-            nowPlayingSong = restoredCurrent
-            nowPlayingDurationMs = restoredCurrent.durationMillis ?: nowPlayingDurationMs
-            nowPlayingPositionMs = 0L
-
-            if (restoredCurrent.sourceType == "APPLE_MUSIC") {
-                val appleSongs = restoreQueue.filter { it.sourceType == "APPLE_MUSIC" }
-                val appleIds = appleSongs.map { it.audioUri ?: it.id }
-                val appleIndex = appleSongs.indexOfFirst { it.id == restoredCurrent.id }
-                    .takeIf { it >= 0 } ?: 0
-                if (appleIds.isNotEmpty()) {
-                    app.appleMusicPlayer.playQueueOfSongs(appleIds, appleIndex)
-                } else {
-                    app.appleMusicPlayer.playSongById(
-                        restoredCurrent.audioUri ?: restoredCurrent.id
-                    )
-                }
-                isPlaybackPlaying = true
-            } else if (restoredCurrent.sourceType == "LOCAL_FILE") {
-                val controller = localMediaController ?: return
-                val localSongs = restoreQueue
-                    .filter { it.sourceType == "LOCAL_FILE" && !it.audioUri.isNullOrBlank() }
-                if (localSongs.isEmpty()) return
-
-                val mediaItems = localSongs.map { MediaItem.fromUri(it.audioUri!!) }
-                val targetUri = restoredCurrent.audioUri ?: restoredCurrent.id
-                val localStartIndex =
-                    mediaItems.indexOfFirst { it.localConfiguration?.uri.toString() == targetUri }
-                        .takeIf { it >= 0 } ?: 0
-
-                controller.setMediaItems(mediaItems, localStartIndex, 0L)
-                controller.prepare()
-                controller.playWhenReady = true
-                isPlaybackPlaying = true
-            }
-        }
-    }
-
-    fun cycleRepeatMode() {
-        repeatMode = when (repeatMode) {
-            RepeatMode.OFF -> RepeatMode.QUEUE
-            RepeatMode.QUEUE -> RepeatMode.ONE
-            RepeatMode.ONE -> RepeatMode.OFF
-        }
-        val song = nowPlayingSong
-        if (song?.sourceType == "LOCAL_FILE") {
-            localMediaController?.let { controller ->
-                controller.repeatMode = when (repeatMode) {
-                    RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                    RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
-                    RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-                }
-            }
-        } else if (song?.sourceType == "APPLE_MUSIC") {
-            val repeat = when (repeatMode) {
-                RepeatMode.OFF -> PlaybackRepeatMode.REPEAT_MODE_OFF
-                RepeatMode.QUEUE -> PlaybackRepeatMode.REPEAT_MODE_ALL
-                RepeatMode.ONE -> PlaybackRepeatMode.REPEAT_MODE_ONE
-            }
-            app.mediaPlayerController.setRepeatMode(repeat)
-        }
+        showNowPlaying = true
     }
 
     fun addSongToPlaylist(song: SongUiModel, playlist: PlaylistUiModel) {
         playlistScope.launch {
-            var snackbarMessage: String? = null
+            var snackbarMessage: String?
             try {
-                val result = viewModel.addSongToPlaylist(song, playlist)
+                val result = playlistsViewModel.addSongToPlaylist(song, playlist)
                 if (result.newSongCount != null) {
                     val count = result.newSongCount
                     libraryPlaylists = libraryPlaylists.map { existingPlaylist ->
@@ -816,8 +417,7 @@ fun CalmMusic(app: CalmMusic) {
                 if (result.wasAdded || result.alreadyInPlaylist) {
                     showAddToPlaylistDialog = false
                 }
-            } catch (e: Exception) {
-                playlistsError = e.message ?: "Failed to add to playlist"
+            } catch (_: Exception) {
                 snackbarMessage = "Couldn't add to playlist"
             }
             snackbarMessage?.let { message ->
@@ -846,55 +446,22 @@ fun CalmMusic(app: CalmMusic) {
         }
     }
 
-    // Keep the locally mirrored playlists list in sync with the
-    // ViewModel-backed playlists used by PlaylistsScreen.
     LaunchedEffect(libraryPlaylistsState) {
         libraryPlaylists = libraryPlaylistsState
     }
 
-    // Keep the ViewModel's playback snapshot in sync, including
-    // position/duration. This may update relatively frequently but stays
-    // in-memory and does not touch the system overlay.
-    LaunchedEffect(
-        playbackQueue,
-        playbackQueueIndex,
-        originalPlaybackQueue,
-        repeatMode,
-        isShuffleOn,
-        currentSongId,
-        nowPlayingSong,
-        isPlaybackPlaying,
-        nowPlayingPositionMs,
-        nowPlayingDurationMs,
-    ) {
-        viewModel.updatePlaybackStateFromUi(
-            queue = playbackQueue,
-            queueIndex = playbackQueueIndex,
-            originalQueue = originalPlaybackQueue,
-            repeatMode = repeatMode,
-            isShuffleOn = isShuffleOn,
-            currentSongId = currentSongId,
-            nowPlayingSong = nowPlayingSong,
-            isPlaying = isPlaybackPlaying,
-            positionMs = nowPlayingPositionMs,
-            durationMs = nowPlayingDurationMs,
-        )
+    LaunchedEffect(playbackQueue) {
+        app.playbackStateManager.updateQueue(playbackQueue)
     }
 
-    LaunchedEffect(
-        playbackQueue,
-        currentSongId,
-        nowPlayingSong,
-        isPlaybackPlaying,
-    ) {
-        app.playbackStateManager.updateQueue(playbackQueue)
+    LaunchedEffect(nowPlayingSong, isPlaybackPlaying) {
         if (nowPlayingSong != null) {
             app.playbackStateManager.updateState(
-                songId = nowPlayingSong!!.id,
-                title = nowPlayingSong!!.title,
-                artist = nowPlayingSong!!.artist,
+                songId = nowPlayingSong.id,
+                title = nowPlayingSong.title,
+                artist = nowPlayingSong.artist,
                 isPlaying = isPlaybackPlaying,
-                sourceType = nowPlayingSong!!.sourceType,
+                sourceType = nowPlayingSong.sourceType,
             )
         } else {
             app.playbackStateManager.clearState()
@@ -916,83 +483,25 @@ fun CalmMusic(app: CalmMusic) {
         }, ContextCompat.getMainExecutor(context))
     }
 
-    LaunchedEffect(localMediaController, nowPlayingSong, playbackQueue) {
+    LaunchedEffect(localMediaController) {
         val controller = localMediaController ?: return@LaunchedEffect
-        var lastLocalQueueIndex: Int? = null
-        while (nowPlayingSong?.sourceType == "LOCAL_FILE") {
-            isPlaybackPlaying = controller.playWhenReady
-            nowPlayingPositionMs = controller.currentPosition
-            val duration = controller.duration
-            if (duration > 0) {
-                nowPlayingDurationMs = duration
-            }
-            val currentLocalIndex = controller.currentMediaItemIndex
-            if (currentLocalIndex >= 0 && currentLocalIndex != lastLocalQueueIndex) {
-                lastLocalQueueIndex = currentLocalIndex
-                val localOnlyQueue = playbackQueue
-                    .filter { it.sourceType == "LOCAL_FILE" && !it.audioUri.isNullOrBlank() }
-                if (currentLocalIndex in localOnlyQueue.indices) {
-                    val newLocalSong = localOnlyQueue[currentLocalIndex]
-                    val globalIndex = playbackQueue.indexOfFirst { it.id == newLocalSong.id }
-                    if (globalIndex >= 0) {
-                        playbackQueueIndex = globalIndex
-                        currentSongId = newLocalSong.id
-                        nowPlayingSong = newLocalSong
-                        nowPlayingDurationMs = newLocalSong.durationMillis ?: nowPlayingDurationMs
-                        nowPlayingPositionMs = 0L
-                        isPlaybackPlaying = controller.playWhenReady
-                    }
-                }
-            }
-            delay(750)
-        }
+        viewModel.startLocalPlaybackMonitoring(controller)
     }
 
     LaunchedEffect(Unit) {
         app.appleMusicPlayer.setOnCurrentItemChangedListener { appleQueueIndex ->
-            if (appleQueueIndex == null || appleQueueIndex < 0) {
-                isPlaybackPlaying = false
-                return@setOnCurrentItemChangedListener
-            }
-            val appleIndexed = playbackQueue
-                .mapIndexedNotNull { idx, song ->
-                    if (song.sourceType == "APPLE_MUSIC") idx to song else null
-                }
-            if (appleQueueIndex in appleIndexed.indices) {
-                val (globalIndex, song) = appleIndexed[appleQueueIndex]
-                playbackQueueIndex = globalIndex
-                currentSongId = song.id
-                nowPlayingSong = song
-                nowPlayingDurationMs = song.durationMillis ?: nowPlayingDurationMs
-                nowPlayingPositionMs = 0L
-                isPlaybackPlaying = true
-            }
+            viewModel.updateFromAppleQueueIndex(appleQueueIndex)
         }
     }
 
     LaunchedEffect(isAuthenticated) {
         songsError = null
         albumsError = null
-        playlistsError = null
-
-        // val hasExistingSongs = librarySongs.isNotEmpty()
-        // val errorMessage = viewModel.syncAppleMusicIfNeeded(
-        //     isAuthenticated = isAuthenticated,
-        //     hasExistingSongs = hasExistingSongs,
-        // )
-        // if (errorMessage != null) {
-        //     songsError = errorMessage
-        //     albumsError = errorMessage
-        // }
     }
 
     LaunchedEffect(includeLocalMusic, localMusicFolders) {
-        flowOf(includeLocalMusic to localMusicFolders)
-            .distinctUntilChanged()
-            .debounce(500L)
-            .collectLatest { (include, folders) ->
-                resyncLocalLibrary(include, folders)
-            }
+        delay(500L)
+        resyncLocalLibrary(includeLocalMusic, localMusicFolders)
     }
 
     val openStreamingSettings: () -> Unit = {
@@ -1011,6 +520,156 @@ fun CalmMusic(app: CalmMusic) {
             popUpTo(navController.graph.startDestinationId) { saveState = true }
             launchSingleTop = true
             restoreState = true
+        }
+    }
+
+    fun NavGraphBuilder.playlistsNavGraph() {
+        composable(Screen.Playlists.route) {
+            PlaylistsScreen(
+                playlists = libraryPlaylists,
+                isInEditMode = isPlaylistsEditMode,
+                onPlaylistClick = { playlist: PlaylistUiModel ->
+                    selectedPlaylist = playlist
+                    navController.navigate(Screen.PlaylistDetails.route) {
+                        launchSingleTop = true
+                    }
+                },
+                onAddPlaylistClick = {
+                    selectedPlaylist = null
+                    navController.navigate(Screen.PlaylistEdit.route) {
+                        launchSingleTop = true
+                    }
+                },
+                onSelectionChanged = { selectedIds ->
+                    playlistEditSelectionIds.clear()
+                    playlistEditSelectionIds.addAll(selectedIds)
+                    playlistEditSelectionCount = selectedIds.size
+                },
+            )
+        }
+        composable(Screen.PlaylistDetails.route) {
+            PlaylistDetailsScreen(
+                playlistId = selectedPlaylist?.id,
+                playbackViewModel = viewModel,
+                playlistsViewModel = playlistsViewModel,
+                isInEditMode = isPlaylistDetailsEditMode,
+                selectedSongIds = playlistDetailsSelectionIds.toSet(),
+                onSongSelectionChange = { songId, isSelected ->
+                    if (isSelected) {
+                        playlistDetailsSelectionIds.add(songId)
+                    } else {
+                        playlistDetailsSelectionIds.remove(songId)
+                    }
+                    playlistDetailsSelectionCount = playlistDetailsSelectionIds.size
+                },
+                onPlaySongClick = { song: SongUiModel, songs: List<SongUiModel> ->
+                    val index = songs.indexOfFirst { it.id == song.id }
+                    val startIndex = if (index >= 0) index else 0
+                    startPlaybackFromQueue(songs, startIndex)
+                },
+                onAddSongsClick = {
+                    if (selectedPlaylist != null) {
+                        playlistAddSongsSelection = emptySet()
+                        navController.navigate(Screen.PlaylistAddSongs.route) {
+                            launchSingleTop = true
+                        }
+                    }
+                },
+                onShuffleClick = { songs ->
+                    startShuffledPlaybackFromQueue(songs)
+                },
+            )
+        }
+        composable(Screen.PlaylistAddSongs.route) {
+            var existingIds by remember { mutableStateOf(emptySet<String>()) }
+            LaunchedEffect(selectedPlaylist?.id) {
+                val id = selectedPlaylist?.id
+                if (id != null) {
+                    try {
+                        val songs = playlistsViewModel.getPlaylistSongs(id)
+                        existingIds = songs.map { it.id }.toSet()
+                    } catch (_: Exception) {
+                        // existingIds remains empty
+                    }
+                }
+            }
+            val candidateSongs = librarySongs.filter { it.id !in existingIds }
+
+            PlaylistAddSongsScreen(
+                songs = candidateSongs,
+                initialSelectedSongIds = playlistAddSongsSelection,
+                onSelectionChanged = { selectedIds ->
+                    playlistAddSongsSelection = selectedIds
+                },
+            )
+        }
+        composable(Screen.PlaylistEdit.route) {
+            val editing = selectedPlaylist
+            PlaylistEditScreen(
+                initialName = editing?.name ?: "",
+                isEditing = editing != null,
+                onConfirm = { newName ->
+                    val trimmed = newName.trim()
+                    if (trimmed.isEmpty()) return@PlaylistEditScreen
+                    playlistScope.launch {
+                        var navigatedToDetails = false
+                        var shouldPopBack = false
+                        try {
+                            val songToAdd = pendingAddToNewPlaylistSong
+                            val editingPlaylist = editing
+
+                            val result = playlistsViewModel.createOrUpdatePlaylist(
+                                params = PlaylistsViewModel.EditPlaylistParams(
+                                    playlistId = editingPlaylist?.id,
+                                    name = trimmed,
+                                    description = editingPlaylist?.description,
+                                    songToAdd = songToAdd,
+                                )
+                            )
+
+                            val playlists = playlistsViewModel.refreshPlaylists()
+                            libraryPlaylists = playlists
+
+                            val finalPlaylistId = result.playlistId
+                            if (editingPlaylist != null) {
+                                val targetPlaylist = libraryPlaylists.firstOrNull { it.id == finalPlaylistId }
+                                    ?: editingPlaylist.copy(name = trimmed)
+                                selectedPlaylist = targetPlaylist
+                                navigatedToDetails = true
+                                navController.navigate(Screen.PlaylistDetails.route) {
+                                    popUpTo(Screen.Playlists.route) { saveState = true }
+                                    launchSingleTop = true
+                                }
+                            } else {
+                                val targetPlaylist = libraryPlaylists.firstOrNull { it.id == finalPlaylistId }
+                                    ?: PlaylistUiModel(
+                                        id = finalPlaylistId,
+                                        name = trimmed,
+                                        description = null,
+                                        songCount = result.songCount,
+                                    )
+                                selectedPlaylist = targetPlaylist
+                                navigatedToDetails = true
+                                navController.navigate(Screen.PlaylistDetails.route) {
+                                    popUpTo(Screen.Playlists.route) { saveState = true }
+                                    launchSingleTop = true
+                                }
+                            }
+                        } catch (_: Exception) {
+                            shouldPopBack = true
+                        } finally {
+                            pendingAddToNewPlaylistSong = null
+                            if (shouldPopBack && !navigatedToDetails) {
+                                navController.popBackStack()
+                            }
+                        }
+                    }
+                },
+                onCancel = {
+                    pendingAddToNewPlaylistSong = null
+                    navController.popBackStack()
+                },
+            )
         }
     }
 
@@ -1048,6 +707,9 @@ fun CalmMusic(app: CalmMusic) {
                         onEnterPlaylistsEditClick = { isPlaylistsEditMode = true },
                         onNavigateToSearchClick = {
                             navController.navigate(Screen.Search.route) { launchSingleTop = true }
+                        },
+                        onPlaylistDetailsMenuToggle = {
+                            isPlaylistDetailsMenuExpanded = !isPlaylistDetailsMenuExpanded
                         },
                         onPlaylistDetailsEditClick = {
                             if (!isPlaylistDetailsEditMode) {
@@ -1098,64 +760,32 @@ fun CalmMusic(app: CalmMusic) {
                                 navController.popBackStack()
                             } else {
                                 playlistScope.launch {
-                                    var snackbarMessage: String? = null
+                                    var snackbarMessage: String?
                                     try {
-                                        val existingEntities = withContext(Dispatchers.IO) {
-                                            playlistDao.getSongsForPlaylist(playlist.id)
-                                        }
-                                        val existingIds = existingEntities.map { it.id }.toSet()
-                                        val songsToAdd = librarySongs.filter { it.id in selectedIds && it.id !in existingIds }
-                                        if (songsToAdd.isNotEmpty()) {
-                                            val addedCount = songsToAdd.size
-                                            val newEntities = withContext(Dispatchers.IO) {
-                                                val songEntities = songsToAdd.map { song ->
-                                                    SongEntity(
-                                                        id = song.id,
-                                                        title = song.title,
-                                                        artist = song.artist,
-                                                        album = null,
-                                                        albumId = null,
-                                                        discNumber = null,
-                                                        trackNumber = song.trackNumber,
-                                                        durationMillis = song.durationMillis,
-                                                        sourceType = song.sourceType,
-                                                        audioUri = song.audioUri ?: song.id,
-                                                        artistId = null,
-                                                        releaseYear = null,
-                                                    )
-                                                }
-                                                songDao.upsertAll(songEntities)
-                                                val startingPosition = existingEntities.size
-                                                val tracks = songsToAdd.mapIndexed { index, song ->
-                                                    PlaylistTrackEntity(
-                                                        playlistId = playlist.id,
-                                                        songId = song.id,
-                                                        position = startingPosition + index,
-                                                    )
-                                                }
-                                                playlistDao.upsertTracks(tracks)
-                                                playlistDao.getSongsForPlaylist(playlist.id)
-                                            }
+                                        val result = playlistsViewModel.addSongsToPlaylist(
+                                            playlistId = playlist.id,
+                                            selectedSongIds = selectedIds,
+                                        )
 
-                                            val newCount = newEntities.size
-                                            libraryPlaylists = libraryPlaylists.map { existingPlaylist ->
-                                                if (existingPlaylist.id == playlist.id) {
-                                                    existingPlaylist.copy(songCount = newCount)
-                                                } else {
-                                                    existingPlaylist
-                                                }
-                                            }
-
-                                            snackbarMessage = if (addedCount == 1) {
-                                                "Added 1 song to \"${playlist.name}\""
+                                        // Update playlist song count in the local UI snapshot.
+                                        libraryPlaylists = libraryPlaylists.map { existingPlaylist ->
+                                            if (existingPlaylist.id == playlist.id) {
+                                                existingPlaylist.copy(songCount = result.totalSongCount)
                                             } else {
-                                                "Added ${addedCount} songs to \"${playlist.name}\""
+                                                existingPlaylist
                                             }
-                                        } else {
-                                            snackbarMessage = "All selected songs are already in \"${playlist.name}\""
                                         }
-                                    } catch (e: Exception) {
-                                        playlistsError = e.message ?: "Failed to add songs to playlist"
+
+                                        snackbarMessage = when {
+                                            result.addedCount == 1 ->
+                                                "Added 1 song to \"${playlist.name}\""
+                                            result.addedCount > 1 ->
+                                                "Added ${result.addedCount} songs to \"${playlist.name}\""
+                                            result.allSelectedAlreadyPresent ->
+                                                "All selected songs are already in \"${playlist.name}\""
+                                            else -> null
+                                        }
+                                    } catch (_: Exception) {
                                         snackbarMessage = "Couldn't add songs to playlist"
                                     } finally {
                                         playlistAddSongsSelection = emptySet()
@@ -1196,29 +826,8 @@ fun CalmMusic(app: CalmMusic) {
                 startDestination = Screen.Songs.route,
                 modifier = Modifier.padding(paddingValues),
             ) {
-                composable(Screen.Playlists.route) {
-                    PlaylistsScreen(
-                        playlists = libraryPlaylists,
-                        isInEditMode = isPlaylistsEditMode,
-                        onPlaylistClick = { playlist: PlaylistUiModel ->
-                            selectedPlaylist = playlist
-                            navController.navigate(Screen.PlaylistDetails.route) {
-                                launchSingleTop = true
-                            }
-                        },
-                        onAddPlaylistClick = {
-                            selectedPlaylist = null
-                            navController.navigate(Screen.PlaylistEdit.route) {
-                                launchSingleTop = true
-                            }
-                        },
-                        onSelectionChanged = { selectedIds ->
-                            playlistEditSelectionIds.clear()
-                            playlistEditSelectionIds.addAll(selectedIds)
-                            playlistEditSelectionCount = selectedIds.size
-                        },
-                    )
-                }
+                playlistsNavGraph()
+
                 composable(Screen.Artists.route) {
                     ArtistsScreen(
                         artists = libraryArtists,
@@ -1283,12 +892,12 @@ fun CalmMusic(app: CalmMusic) {
                         songs = searchSongs,
                         playlists = searchPlaylists,
                         onPlaySongClick = { song: SongUiModel ->
-                            currentSongId = song.id
-                            nowPlayingSong = song
-                            isPlaybackPlaying = true
-                            nowPlayingPositionMs = 0L
-                            nowPlayingDurationMs = song.durationMillis ?: 0L
-                            app.appleMusicPlayer.playSongById(song.id)
+                            viewModel.startPlaybackFromQueue(
+                                queue = listOf(song),
+                                startIndex = 0,
+                                isNewQueue = true,
+                                localController = localMediaController,
+                            )
                             showNowPlaying = true
                         },
                         onPlaylistClick = { playlist: PlaylistUiModel ->
@@ -1307,180 +916,6 @@ fun CalmMusic(app: CalmMusic) {
                         },
                         onShuffleClick = { songs ->
                             startShuffledPlaybackFromQueue(songs)
-                        },
-                    )
-                }
-                composable(Screen.PlaylistDetails.route) {
-                    PlaylistDetailsScreen(
-                        playlistId = selectedPlaylist?.id,
-                        viewModel = viewModel,
-                        isInEditMode = isPlaylistDetailsEditMode,
-                        selectedSongIds = playlistDetailsSelectionIds.toSet(),
-                        onSongSelectionChange = { songId, isSelected ->
-                            if (isSelected) {
-                                playlistDetailsSelectionIds.add(songId)
-                            } else {
-                                playlistDetailsSelectionIds.remove(songId)
-                            }
-                            playlistDetailsSelectionCount = playlistDetailsSelectionIds.size
-                        },
-                        onPlaySongClick = { song: SongUiModel, songs: List<SongUiModel> ->
-                            val index = songs.indexOfFirst { it.id == song.id }
-                            val startIndex = if (index >= 0) index else 0
-                            startPlaybackFromQueue(songs, startIndex)
-                        },
-                        onAddSongsClick = {
-                            if (selectedPlaylist != null) {
-                                playlistAddSongsSelection = emptySet()
-                                navController.navigate(Screen.PlaylistAddSongs.route) {
-                                    launchSingleTop = true
-                                }
-                            }
-                        },
-                        onShuffleClick = { songs ->
-                            startShuffledPlaybackFromQueue(songs)
-                        },
-                    )
-                }
-                composable(Screen.PlaylistAddSongs.route) {
-                    var existingIds by remember { mutableStateOf(emptySet<String>()) }
-                    LaunchedEffect(selectedPlaylist?.id) {
-                        val id = selectedPlaylist?.id
-                        if (id != null) {
-                            try {
-                                val songs = viewModel.getPlaylistSongs(id)
-                                existingIds = songs.map { it.id }.toSet()
-                            } catch (e: Exception) {
-                                // existingIds remains empty
-                            }
-                        }
-                    }
-                    val candidateSongs = librarySongs.filter { it.id !in existingIds }
-
-                    PlaylistAddSongsScreen(
-                        songs = candidateSongs,
-                        initialSelectedSongIds = playlistAddSongsSelection,
-                        onSelectionChanged = { selectedIds ->
-                            playlistAddSongsSelection = selectedIds
-                        },
-                    )
-                }
-                composable(Screen.PlaylistEdit.route) {
-                    val editing = selectedPlaylist
-                    PlaylistEditScreen(
-                        initialName = editing?.name ?: "",
-                        isEditing = editing != null,
-                        onConfirm = { newName ->
-                            val trimmed = newName.trim()
-                            if (trimmed.isEmpty()) return@PlaylistEditScreen
-                            playlistScope.launch {
-                                var navigatedToDetails = false
-                                var shouldPopBack = false
-                                try {
-                                    val songToAdd = pendingAddToNewPlaylistSong
-                                    val editingPlaylist = editing
-                                    var playlistId: String? = null
-                                    var playlistSongEntities: List<SongEntity>? = null
-
-                                    withContext(Dispatchers.IO) {
-                                        if (editingPlaylist != null) {
-                                            val resolvedPlaylistId = editingPlaylist.id
-                                            playlistId = resolvedPlaylistId
-                                            playlistDao.updatePlaylistMetadata(
-                                                id = resolvedPlaylistId,
-                                                name = trimmed,
-                                                description = editingPlaylist.description,
-                                            )
-                                        } else {
-                                            val resolvedPlaylistId = "LOCAL_PLAYLIST:" + UUID.randomUUID().toString()
-                                            playlistId = resolvedPlaylistId
-                                            val entity = PlaylistEntity(
-                                                id = resolvedPlaylistId,
-                                                name = trimmed,
-                                                description = null,
-                                            )
-                                            playlistDao.upsertPlaylist(entity)
-
-                                            if (songToAdd != null) {
-                                                val songEntity = SongEntity(
-                                                    id = songToAdd.id,
-                                                    title = songToAdd.title,
-                                                    artist = songToAdd.artist,
-                                                    album = null,
-                                                    albumId = null,
-                                                    discNumber = null,
-                                                    trackNumber = songToAdd.trackNumber,
-                                                    durationMillis = songToAdd.durationMillis,
-                                                    sourceType = songToAdd.sourceType,
-                                                    audioUri = songToAdd.audioUri ?: songToAdd.id,
-                                                    artistId = null,
-                                                    releaseYear = null,
-                                                )
-                                                songDao.upsertAll(listOf(songEntity))
-                                                val existing = playlistDao.getSongsForPlaylist(resolvedPlaylistId)
-                                                val position = existing.size
-                                                val track = PlaylistTrackEntity(
-                                                    playlistId = resolvedPlaylistId,
-                                                    songId = songToAdd.id,
-                                                    position = position,
-                                                )
-                                                playlistDao.upsertTracks(listOf(track))
-                                                val updated = playlistDao.getSongsForPlaylist(resolvedPlaylistId)
-                                                playlistSongEntities = updated
-                                            }
-                                        }
-                                        val playlists = playlistDao.getAllPlaylistsWithSongCount()
-                                        libraryPlaylists = playlists.map { p ->
-                                            PlaylistUiModel(
-                                                id = p.id,
-                                                name = p.name,
-                                                description = p.description,
-                                                songCount = p.songCount,
-                                            )
-                                        }
-                                    }
-
-                                    val finalPlaylistId = playlistId
-                                    if (editingPlaylist != null && finalPlaylistId != null) {
-                                        val targetPlaylist = libraryPlaylists.firstOrNull { it.id == finalPlaylistId }
-                                            ?: editingPlaylist.copy(name = trimmed)
-                                        selectedPlaylist = targetPlaylist
-                                        navigatedToDetails = true
-                                        navController.navigate(Screen.PlaylistDetails.route) {
-                                            popUpTo(Screen.Playlists.route) { saveState = true }
-                                            launchSingleTop = true
-                                        }
-                                    } else if (finalPlaylistId != null) {
-                                        val targetPlaylist = libraryPlaylists.firstOrNull { it.id == finalPlaylistId }
-                                            ?: PlaylistUiModel(
-                                                id = finalPlaylistId,
-                                                name = trimmed,
-                                                description = null,
-                                                songCount = playlistSongEntities?.size ?: 0,
-                                            )
-                                        selectedPlaylist = targetPlaylist
-                                        navigatedToDetails = true
-                                        navController.navigate(Screen.PlaylistDetails.route) {
-                                            popUpTo(Screen.Playlists.route) { saveState = true }
-                                            launchSingleTop = true
-                                        }
-                                    } else {
-                                        shouldPopBack = true
-                                    }
-                                } catch (e: Exception) {
-                                    playlistsError = e.message ?: "Failed to save playlist"
-                                    shouldPopBack = true
-                                } finally {
-                                    pendingAddToNewPlaylistSong = null
-                                    if (shouldPopBack && !navigatedToDetails) {
-                                        navController.popBackStack()
-                                    }
-                                }
-                            }
-                        },
-                        onCancel = {
-                            pendingAddToNewPlaylistSong = null
-                            navController.popBackStack()
                         },
                     )
                 }
@@ -1548,7 +983,7 @@ fun CalmMusic(app: CalmMusic) {
                         val powerManager = context.getSystemService(PowerManager::class.java)
                         if (powerManager != null && !powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
                             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                data = Uri.parse("package:${context.packageName}")
+                                data = "package:${context.packageName}".toUri()
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
                             context.startActivity(intent)
@@ -1593,10 +1028,10 @@ fun CalmMusic(app: CalmMusic) {
             }
         }
 
-        if (showNowPlaying && nowPlayingSong != null) {
-            val song = nowPlayingSong!!
+        if (showNowPlaying && playbackState.nowPlayingSong != null) {
+            val song = playbackState.nowPlayingSong!!
             val displayDuration = when {
-                nowPlayingDurationMs > 0L -> nowPlayingDurationMs
+                playbackState.nowPlayingDurationMs > 0L -> playbackState.nowPlayingDurationMs
                 song.durationMillis != null && song.durationMillis > 0L -> song.durationMillis
                 else -> 0L
             }
@@ -1617,40 +1052,47 @@ fun CalmMusic(app: CalmMusic) {
                 showNowPlaying = false
             }
 
-            NowPlayingScreen(
-                title = song.title,
-                artist = song.artist.ifBlank { if (song.sourceType == "LOCAL_FILE") "Local file" else "" },
-                album = song.album,
-                isPlaying = isPlaybackPlaying,
-                isLoading = false,
-                currentPosition = nowPlayingPositionMs.coerceAtMost(displayDuration),
-                duration = displayDuration,
-                repeatMode = repeatMode,
-                isShuffleOn = isShuffleOn,
-                onPlayPauseClick = { togglePlayback() },
-                onSeek = { positionMs ->
-                    if (song.sourceType == "LOCAL_FILE") {
-                        localMediaController?.seekTo(positionMs)
-                        nowPlayingPositionMs = positionMs
-                    }
-                },
-                onSeekBackwardClick = { playPreviousInQueue() },
-                onSeekForwardClick = { playNextInQueue() },
-                onShuffleClick = { toggleShuffleMode() },
-                onRepeatClick = { cycleRepeatMode() },
-                onAddToPlaylistClick = {
-                    if (nowPlayingSong != null) {
-                        showAddToPlaylistDialog = true
-                    }
-                },
-                onBackClick = { showNowPlaying = false },
-                isVideo = isLocalVideo,
-                player = if (isLocalVideo) localMediaController else null,
-            )
+                NowPlayingScreen(
+                    title = song.title,
+                    artist = song.artist.ifBlank { if (song.sourceType == "LOCAL_FILE") "Local file" else "" },
+                    album = song.album,
+                    isPlaying = playbackState.isPlaybackPlaying,
+                    isLoading = false,
+                    currentPosition = playbackState.nowPlayingPositionMs.coerceAtMost(displayDuration),
+                    duration = displayDuration,
+                    repeatMode = playbackState.repeatMode,
+                    isShuffleOn = playbackState.isShuffleOn,
+                    onPlayPauseClick = { togglePlayback() },
+                    onSeek = { positionMs ->
+                        if (song.sourceType == "LOCAL_FILE") {
+                            localMediaController?.seekTo(positionMs)
+                        }
+                    },
+                    onSeekBackwardClick = {
+                        viewModel.playPreviousInQueue(localMediaController)
+                    },
+                    onSeekForwardClick = {
+                        viewModel.playNextInQueue(localMediaController)
+                    },
+                    onShuffleClick = {
+                        viewModel.toggleShuffleMode(localMediaController)
+                    },
+                    onRepeatClick = {
+                        viewModel.cycleRepeatMode(localMediaController)
+                    },
+                    onAddToPlaylistClick = {
+                        if (playbackState.nowPlayingSong != null) {
+                            showAddToPlaylistDialog = true
+                        }
+                    },
+                    onBackClick = { showNowPlaying = false },
+                    isVideo = isLocalVideo,
+                    player = if (isLocalVideo) localMediaController else null,
+                )
         }
 
-        if (showAddToPlaylistDialog && nowPlayingSong != null) {
-            val song = nowPlayingSong!!
+        if (showAddToPlaylistDialog && playbackState.nowPlayingSong != null) {
+            val song = playbackState.nowPlayingSong!!
             val configuration = LocalConfiguration.current
             val screenHeight = configuration.screenHeightDp.dp
 
@@ -1801,16 +1243,12 @@ fun CalmMusic(app: CalmMusic) {
                         ButtonMMD(
                             onClick = {
                                 playlistScope.launch {
-                                    var snackbarMessage: String? = null
+                                    var snackbarMessage: String?
                                     try {
-                                        val updatedCount = withContext(Dispatchers.IO) {
-                                            playlistDao.deleteTracksForPlaylistAndSongIds(
-                                                playlistId = playlist.id,
-                                                songIds = idsToRemove.toList(),
-                                            )
-                                            val songs = playlistDao.getSongsForPlaylist(playlist.id)
-                                            songs.size
-                                        }
+                                        val updatedCount = playlistsViewModel.removeSongsFromPlaylist(
+                                            playlistId = playlist.id,
+                                            songIds = idsToRemove,
+                                        )
 
                                         libraryPlaylists = libraryPlaylists.map { existingPlaylist ->
                                             if (existingPlaylist.id == playlist.id) {
@@ -1826,7 +1264,7 @@ fun CalmMusic(app: CalmMusic) {
                                         } else {
                                             "Removed $removedCount songs from \"${playlist.name}\""
                                         }
-                                    } catch (e: Exception) {
+                                    } catch (_: Exception) {
                                         snackbarMessage = "Couldn't remove songs from playlist"
                                     } finally {
                                         playlistDetailsSelectionIds.clear()
@@ -1923,30 +1361,14 @@ fun CalmMusic(app: CalmMusic) {
                             onClick = {
                                 playlistScope.launch {
                                     val currentPlaylistsById = libraryPlaylists.associateBy { it.id }
-                                    var snackbarMessage: String? = null
+                                    var snackbarMessage: String?
 
                                     try {
-                                        val remainingPlaylists = withContext(Dispatchers.IO) {
-                                            idsToDelete.forEach { id ->
-                                                playlistDao.deleteTracksForPlaylist(id)
-                                                val playlistInfo = currentPlaylistsById[id]
-                                                val entity = PlaylistEntity(
-                                                    id = id,
-                                                    name = playlistInfo?.name ?: "",
-                                                    description = playlistInfo?.description,
-                                                )
-                                                playlistDao.deletePlaylist(entity)
-                                            }
-                                            playlistDao.getAllPlaylistsWithSongCount()
+                                        val playlistsToDelete = idsToDelete.mapNotNull { id ->
+                                            currentPlaylistsById[id]
                                         }
-                                        libraryPlaylists = remainingPlaylists.map { playlist ->
-                                            PlaylistUiModel(
-                                                id = playlist.id,
-                                                name = playlist.name,
-                                                description = playlist.description,
-                                                songCount = playlist.songCount,
-                                            )
-                                        }
+                                        val remainingPlaylists = playlistsViewModel.deletePlaylists(playlistsToDelete)
+                                        libraryPlaylists = remainingPlaylists
 
                                         val deletedIds = idsToDelete
                                         val currentDetailsPlaylist = selectedPlaylist
@@ -1968,7 +1390,7 @@ fun CalmMusic(app: CalmMusic) {
                                         } else {
                                             "Deleted $deletedCount playlists"
                                         }
-                                    } catch (e: Exception) {
+                                    } catch (_: Exception) {
                                         snackbarMessage = "Couldn't delete playlists"
                                     } finally {
                                         playlistEditSelectionIds.clear()

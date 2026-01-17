@@ -355,6 +355,42 @@ fun SettingsScreen(
                         }
                     }
 
+                    // Show the last scan summary after work is complete.
+                    if (!isRescanningLocal && !isIngestingLocal &&
+                        localScanTotalDiscovered != null &&
+                        localScanSkippedUnchanged != null &&
+                        localScanIndexedNewOrUpdated != null
+                    ) {
+                        item {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+                            ) {
+                                TextMMD(
+                                    text = "Last scan",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                TextMMD(
+                                    text = "Found $localScanTotalDiscovered files · Skipped $localScanSkippedUnchanged unchanged · Indexed $localScanIndexedNewOrUpdated new/updated",
+                                    fontSize = 13.sp,
+                                )
+
+                                if (localScanDeletedMissing != null && localScanDeletedMissing > 0) {
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    TextMMD(
+                                        text = "Removed ${localScanDeletedMissing} files that are no longer present",
+                                        fontSize = 13.sp,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     if (localFolders.isEmpty()) {
                         item {
                             Column(

@@ -68,6 +68,7 @@ fun CalmMusicTopAppBar(
     onCancelPlaylistDetailsEditClick: () -> Unit,
     onEnterPlaylistsEditClick: () -> Unit,
     onNavigateToSearchClick: () -> Unit,
+    onPlaylistDetailsMenuToggle: () -> Unit,
     onPlaylistDetailsEditClick: () -> Unit,
     onPlaylistDetailsAddSongsClick: () -> Unit,
     onPlaylistDetailsRenameClick: () -> Unit,
@@ -198,6 +199,7 @@ fun CalmMusicTopAppBar(
                 hasNowPlaying = hasNowPlaying,
                 onEnterPlaylistsEditClick = onEnterPlaylistsEditClick,
                 onNavigateToSearchClick = onNavigateToSearchClick,
+                onPlaylistDetailsMenuToggle = onPlaylistDetailsMenuToggle,
                 onPlaylistDetailsEditClick = onPlaylistDetailsEditClick,
                 onPlaylistDetailsAddSongsClick = onPlaylistDetailsAddSongsClick,
                 onPlaylistDetailsRenameClick = onPlaylistDetailsRenameClick,
@@ -225,6 +227,7 @@ private fun RowScope.CalmMusicTopAppBarActions(
     hasNowPlaying: Boolean,
     onEnterPlaylistsEditClick: () -> Unit,
     onNavigateToSearchClick: () -> Unit,
+    onPlaylistDetailsMenuToggle: () -> Unit,
     onPlaylistDetailsEditClick: () -> Unit,
     onPlaylistDetailsAddSongsClick: () -> Unit,
     onPlaylistDetailsRenameClick: () -> Unit,
@@ -256,7 +259,7 @@ private fun RowScope.CalmMusicTopAppBarActions(
 
     if (currentDestination?.route == Screen.PlaylistDetails.route && !isPlaylistDetailsEditMode) {
         androidx.compose.foundation.layout.Box {
-            IconButton(onClick = onPlaylistDetailsEditClick) {
+            IconButton(onClick = onPlaylistDetailsMenuToggle) {
                 Icon(
                     imageVector = Icons.Outlined.MoreVert,
                     contentDescription = "Playlist options",
@@ -265,7 +268,7 @@ private fun RowScope.CalmMusicTopAppBarActions(
 
             DropdownMenuMMD(
                 expanded = isPlaylistDetailsMenuExpanded,
-                onDismissRequest = onPlaylistDetailsEditClick,
+                onDismissRequest = onPlaylistDetailsMenuToggle,
             ) {
                 DropdownMenuItemMMD(
                     text = { TextMMD("Edit") },

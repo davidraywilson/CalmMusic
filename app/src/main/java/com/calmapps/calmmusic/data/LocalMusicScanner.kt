@@ -4,32 +4,40 @@ import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import androidx.core.net.toUri
 
 object LocalMusicScanner {
-    private val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "aac", "flac", "wav", "ogg", "mp4")
+    private val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "aac", "flac", "wav", "ogg", "mp4", "opus")
 
     /**
      * Scan the given folders for audio files.
      *
-     * Implementation note: this performs a single-pass traversal over the
-     * folder trees and periodically reports progress rather than pre-counting
-     * all audio files up front. This avoids doing two complete SAF walks,
-     * which can be very expensive on large storage volumes.
+     * Implementation note: this performs a SAF traversal to discover candidate
+     * audio files, then processes them in a second pass where files that are
+     * new or changed since the last scan are prioritized.
      */
     suspend fun scanFolders(
         context: Context,
         folderUris: Set<String>,
         existingSongsByUri: Map<String, SongEntity> = emptyMap(),
+        lastScanMillis: Long = 0L,
         onProgress: suspend (processed: Int, total: Int) -> Unit = { _, _ -> },
     ): List<SongEntity> {
         val result = mutableListOf<SongEntity>()
 
-        var estimatedTotal = 0
-        var processed = 0
-        var lastProgressUpdateTime = 0L
+        data class Candidate(
+            val uri: Uri,
+            val name: String,
+            val lastModified: Long,
+            val fileSize: Long,
+            val existing: SongEntity?,
+        )
+
+        val candidates = mutableListOf<Candidate>()
 
         for (uriString in folderUris) {
-            val treeUri = try { Uri.parse(uriString) } catch (_: Exception) { continue }
+            val treeUri = try {
+                uriString.toUri() } catch (_: Exception) { continue }
             val root = DocumentFile.fromTreeUri(context, treeUri) ?: continue
             val stack = ArrayDeque<DocumentFile>()
             stack.add(root)
@@ -50,86 +58,109 @@ object LocalMusicScanner {
                             val lastModified = child.lastModified()
                             val fileSize = child.length()
 
-                            // Increment our best-effort total as we discover
-                            // new matching files.
-                            estimatedTotal++
-
                             val existing = existingSongsByUri[uriString]
-                            if (existing != null &&
-                                existing.sourceType == "LOCAL_FILE" &&
-                                existing.localLastModifiedMillis == lastModified &&
-                                existing.localFileSizeBytes == fileSize
-                            ) {
-                                result.add(existing)
-                                processed++
-
-                                val now = System.currentTimeMillis()
-                                if (processed == estimatedTotal || now - lastProgressUpdateTime > 200L) {
-                                    lastProgressUpdateTime = now
-                                    onProgress(processed, estimatedTotal)
-                                }
-
-                                continue
-                            }
-
-                            val meta = extractMetadata(context, uri)
-                            val titleFromName = name.substringBeforeLast('.', name)
-
-                            // The "Display Artist" for the track (e.g., "NF & mgk")
-                            val trackArtist = meta.artist.orEmpty().trim()
-
-                            // The "Primary Artist" for the library (prefers Album Artist tag)
-                            val primaryArtist = (meta.albumArtist ?: meta.artist).orEmpty().trim()
-
-                            val albumName = meta.album?.trim()?.takeIf { it.isNotBlank() }
-
-                            // Grouping is now strictly by Album Artist + Album Name
-                            val albumId = if (albumName != null) {
-                                "LOCAL_FILE:${primaryArtist}:${albumName}"
-                            } else null
-
-                            val artistId = if (primaryArtist.isNotBlank()) {
-                                "LOCAL_FILE:$primaryArtist"
-                            } else null
-
-                            result.add(
-                                SongEntity(
-                                    id = uriString,
-                                    title = meta.title ?: titleFromName,
-                                    artist = trackArtist, // Keep featured info for track display
-                                    album = meta.album,
-                                    albumId = albumId,
-                                    discNumber = meta.discNumber, // Pass the extracted disc number
-                                    trackNumber = meta.trackNumber,
-                                    durationMillis = meta.durationMillis,
-                                    sourceType = "LOCAL_FILE",
-                                    audioUri = uriString,
-                                    artistId = artistId, // Group under primary artist
-                                    releaseYear = meta.year,
-                                    localLastModifiedMillis = lastModified,
-                                    localFileSizeBytes = fileSize,
+                            candidates.add(
+                                Candidate(
+                                    uri = uri,
+                                    name = name,
+                                    lastModified = lastModified,
+                                    fileSize = fileSize,
+                                    existing = existing,
                                 ),
                             )
-
-                            processed++
-
-                            val now = System.currentTimeMillis()
-                            if (processed == estimatedTotal || now - lastProgressUpdateTime > 200L) {
-                                lastProgressUpdateTime = now
-                                onProgress(processed, estimatedTotal)
-                            }
                         }
                     }
                 }
             }
         }
 
-        // Ensure a final progress update when we have scanned everything.
-        if (processed == 0 && estimatedTotal == 0) {
+        if (candidates.isEmpty()) {
             onProgress(0, 0)
-        } else {
-            onProgress(processed, estimatedTotal.coerceAtLeast(processed))
+            return emptyList()
         }
+
+        val (unchanged, changed) = candidates.partition { candidate ->
+            val existing = candidate.existing
+            existing != null &&
+                existing.sourceType == "LOCAL_FILE" &&
+                existing.localLastModifiedMillis == candidate.lastModified &&
+                existing.localFileSizeBytes == candidate.fileSize
+        }
+
+        val (recentChanged, olderChanged) = changed.partition { candidate ->
+            candidate.lastModified > lastScanMillis
+        }
+
+        val orderedCandidates =
+            (recentChanged.sortedByDescending { it.lastModified } +
+                olderChanged.sortedByDescending { it.lastModified } +
+                unchanged)
+
+        val total = orderedCandidates.size
+        var processed = 0
+        var lastProgressUpdateTime = 0L
+
+        suspend fun maybeReportProgress() {
+            val now = System.currentTimeMillis()
+            if (processed == total || now - lastProgressUpdateTime > 200L) {
+                lastProgressUpdateTime = now
+                onProgress(processed, total)
+            }
+        }
+
+        for (candidate in orderedCandidates) {
+            val existing = candidate.existing
+            if (existing != null &&
+                existing.sourceType == "LOCAL_FILE" &&
+                existing.localLastModifiedMillis == candidate.lastModified &&
+                existing.localFileSizeBytes == candidate.fileSize
+            ) {
+                result.add(existing)
+                processed++
+                maybeReportProgress()
+                continue
+            }
+
+            val meta = extractMetadata(context, candidate.uri)
+            val titleFromName = candidate.name.substringBeforeLast('.', candidate.name)
+
+            val trackArtist = meta.artist.orEmpty().trim()
+            val primaryArtist = (meta.albumArtist ?: meta.artist).orEmpty().trim()
+            val albumName = meta.album?.trim()?.takeIf { it.isNotBlank() }
+
+            val albumId = if (albumName != null) {
+                "LOCAL_FILE:${primaryArtist}:${albumName}"
+            } else null
+
+            val artistId = if (primaryArtist.isNotBlank()) {
+                "LOCAL_FILE:$primaryArtist"
+            } else null
+
+            val uriString = candidate.uri.toString()
+            result.add(
+                SongEntity(
+                    id = uriString,
+                    title = meta.title ?: titleFromName,
+                    artist = trackArtist,
+                    album = meta.album,
+                    albumId = albumId,
+                    discNumber = meta.discNumber,
+                    trackNumber = meta.trackNumber,
+                    durationMillis = meta.durationMillis,
+                    sourceType = "LOCAL_FILE",
+                    audioUri = uriString,
+                    artistId = artistId,
+                    releaseYear = meta.year,
+                    localLastModifiedMillis = candidate.lastModified,
+                    localFileSizeBytes = candidate.fileSize,
+                ),
+            )
+
+            processed++
+            maybeReportProgress()
+        }
+
+        onProgress(processed, total.coerceAtLeast(processed))
 
         return result
     }

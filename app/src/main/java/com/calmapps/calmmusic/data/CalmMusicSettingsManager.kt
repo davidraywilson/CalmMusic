@@ -27,6 +27,15 @@ class CalmMusicSettingsManager(context: Context) {
         prefs.edit { putLong(KEY_LAST_APPLE_MUSIC_SYNC_MILLIS, value) }
     }
 
+    // Local library scan metadata, used to prioritize recently changed files.
+    fun getLastLocalLibraryScanMillis(): Long {
+        return prefs.getLong(KEY_LAST_LOCAL_LIBRARY_SCAN_MILLIS, 0L)
+    }
+
+    fun updateLastLocalLibraryScanMillis(value: Long) {
+        prefs.edit { putLong(KEY_LAST_LOCAL_LIBRARY_SCAN_MILLIS, value) }
+    }
+
     fun setIncludeLocalMusic(enabled: Boolean) {
         prefs.edit { putBoolean(KEY_INCLUDE_LOCAL_MUSIC, enabled) }
         _includeLocalMusic.value = enabled
@@ -61,5 +70,6 @@ class CalmMusicSettingsManager(context: Context) {
         private const val KEY_INCLUDE_LOCAL_MUSIC = "include_local_music"
         private const val KEY_LOCAL_MUSIC_FOLDERS = "local_music_folders"
         private const val KEY_LAST_APPLE_MUSIC_SYNC_MILLIS = "last_apple_music_sync_millis"
+        private const val KEY_LAST_LOCAL_LIBRARY_SCAN_MILLIS = "last_local_library_scan_millis"
     }
 }

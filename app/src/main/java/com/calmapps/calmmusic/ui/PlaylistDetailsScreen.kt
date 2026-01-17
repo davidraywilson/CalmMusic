@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.calmapps.calmmusic.CalmMusicViewModel
+import com.calmapps.calmmusic.PlaylistsViewModel
 import com.mudita.mmd.components.buttons.ButtonMMD
 import com.mudita.mmd.components.buttons.FloatingActionButtonMMD
 import com.mudita.mmd.components.checkbox.CheckboxMMD
@@ -44,7 +45,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun PlaylistDetailsScreen(
     playlistId: String?,
-    viewModel: CalmMusicViewModel,
+    playbackViewModel: CalmMusicViewModel,
+    playlistsViewModel: PlaylistsViewModel,
     isInEditMode: Boolean,
     selectedSongIds: Set<String>,
     onSongSelectionChange: (songId: String, isSelected: Boolean) -> Unit,
@@ -58,7 +60,7 @@ fun PlaylistDetailsScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     val scope = rememberCoroutineScope()
-    val playbackState by viewModel.playbackState.collectAsState()
+    val playbackState by playbackViewModel.playbackState.collectAsState()
     val currentSongId = playbackState.currentSongId
     val selectedState = remember { mutableStateMapOf<String, Boolean>() }
 
@@ -70,7 +72,7 @@ fun PlaylistDetailsScreen(
         isLoading = true
         errorMessage = null
         try {
-            songs = viewModel.getPlaylistSongs(playlistId)
+            songs = playlistsViewModel.getPlaylistSongs(playlistId)
         } catch (e: Exception) {
             errorMessage = e.message ?: "Failed to load playlist songs"
         } finally {
@@ -93,9 +95,9 @@ fun PlaylistDetailsScreen(
             currentList.add(toIndex, item)
             songs = currentList
 
-            scope.launch {
-                try {
-                    viewModel.updatePlaylistOrder(playlistId, currentList)
+                    scope.launch {
+                        try {
+                            playlistsViewModel.updatePlaylistOrder(playlistId, currentList)
                 } catch (e: Exception) {
                     errorMessage = "Failed to save order"
                 }

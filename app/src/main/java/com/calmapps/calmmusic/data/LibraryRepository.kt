@@ -65,10 +65,16 @@ class LibraryRepository(
             } else {
                 if (folders.isNotEmpty()) {
                     try {
+                        val lastScanMillis = app.settingsManager.getLastLocalLibraryScanMillis()
                         val (localEntities, existingLocalSongs) = withContext(Dispatchers.IO) {
                             val existingLocalSongs = songDao.getSongsBySourceType("LOCAL_FILE")
                             val existingByUri = existingLocalSongs.associateBy { it.audioUri }
-                            val scanned = LocalMusicScanner.scanFolders(app, folders, existingByUri) { processed, total ->
+                            val scanned = LocalMusicScanner.scanFolders(
+                                context = app,
+                                folderUris = folders,
+                                existingSongsByUri = existingByUri,
+                                lastScanMillis = lastScanMillis,
+                            ) { processed, total ->
                                 val progress = if (total > 0) {
                                     (processed.toFloat() / total.toFloat()).coerceIn(0f, 1f)
                                 } else {
@@ -260,6 +266,10 @@ class LibraryRepository(
                     albumCount = artist.albumCount,
                 )
             }
+
+            // Record when this local scan completed so future scans can
+            // prioritize newly changed files.
+            app.settingsManager.updateLastLocalLibraryScanMillis(System.currentTimeMillis())
 
             return LocalResyncResult(
                 songs = songModels,
