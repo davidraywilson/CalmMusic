@@ -125,15 +125,19 @@ object LocalMusicScanner {
             val titleFromName = candidate.name.substringBeforeLast('.', candidate.name)
 
             val trackArtist = meta.artist.orEmpty().trim()
-            val primaryArtist = (meta.albumArtist ?: meta.artist).orEmpty().trim()
-            val albumName = meta.album?.trim()?.takeIf { it.isNotBlank() }
+            val primaryArtistDisplay = (meta.albumArtist ?: meta.artist).orEmpty().trim()
+            val albumNameDisplay = meta.album?.trim()?.takeIf { it.isNotBlank() }
+            val primaryArtistIdComponent = primaryArtistDisplay
+                .takeIf { it.isNotBlank() }
+                ?.normalizeForIdComponent()
 
-            val albumId = if (albumName != null) {
-                "LOCAL_FILE:${primaryArtist}:${albumName}"
-            } else null
+            val albumNameIdComponent = albumNameDisplay
+                ?.normalizeForIdComponent()
 
-            val artistId = if (primaryArtist.isNotBlank()) {
-                "LOCAL_FILE:$primaryArtist"
+            val artistId = primaryArtistIdComponent?.let { "LOCAL_FILE:$it" }
+
+            val albumId = if (albumNameIdComponent != null && primaryArtistIdComponent != null) {
+                "LOCAL_FILE:${primaryArtistIdComponent}:${albumNameIdComponent}"
             } else null
 
             val uriString = candidate.uri.toString()
@@ -142,7 +146,7 @@ object LocalMusicScanner {
                     id = uriString,
                     title = meta.title ?: titleFromName,
                     artist = trackArtist,
-                    album = meta.album,
+                    album = albumNameDisplay,
                     albumId = albumId,
                     discNumber = meta.discNumber,
                     trackNumber = meta.trackNumber,
@@ -246,3 +250,16 @@ private fun String.fixCommonTagMojibake(): String {
 
     return fixed
 }
+
+/**
+ * Normalize a tag string for use in canonical IDs (artistId/albumId).
+ *
+ * This is deliberately more aggressive than [normalizeTagString]: we
+ * lowercase and collapse internal whitespace so that trivial differences
+ * like "In A Perfect World" vs "In a  Perfect  World" don't create
+ * separate albums/artists.
+ */
+private fun String.normalizeForIdComponent(): String =
+    trim()
+        .replace(Regex("\\s+"), " ")
+        .lowercase()
