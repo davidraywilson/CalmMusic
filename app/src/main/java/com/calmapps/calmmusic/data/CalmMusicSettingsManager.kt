@@ -18,6 +18,9 @@ class CalmMusicSettingsManager(context: Context) {
     private val _localMusicFolders = MutableStateFlow(getLocalMusicFoldersSync())
     val localMusicFolders: StateFlow<Set<String>> = _localMusicFolders.asStateFlow()
 
+    private val _streamingProvider = MutableStateFlow(getStreamingProviderSync())
+    val streamingProvider: StateFlow<StreamingProvider> = _streamingProvider.asStateFlow()
+
     // Apple Music sync metadata (not exposed as flows for now; simple perf knob).
     fun getLastAppleMusicSyncMillis(): Long {
         return prefs.getLong(KEY_LAST_APPLE_MUSIC_SYNC_MILLIS, 0L)
@@ -65,6 +68,28 @@ class CalmMusicSettingsManager(context: Context) {
         return prefs.getStringSet(KEY_LOCAL_MUSIC_FOLDERS, emptySet()) ?: emptySet()
     }
 
+    // Streaming provider
+    private fun getStreamingProviderSync(): StreamingProvider {
+        val raw = prefs.getString(KEY_STREAMING_PROVIDER, null)
+        return StreamingProvider.fromStored(raw)
+    }
+
+    fun setStreamingProvider(provider: StreamingProvider) {
+        prefs.edit { putString(KEY_STREAMING_PROVIDER, StreamingProvider.toStored(provider)) }
+        _streamingProvider.value = provider
+    }
+
+    // Dedicated CalmMusic download folder (SAF tree URI for the CalmMusic directory)
+    fun getDownloadFolderUri(): String? {
+        return prefs.getString(KEY_DOWNLOAD_FOLDER_URI, null)
+    }
+
+    fun setDownloadFolderUri(uri: String?) {
+        prefs.edit {
+            if (uri == null) remove(KEY_DOWNLOAD_FOLDER_URI) else putString(KEY_DOWNLOAD_FOLDER_URI, uri)
+        }
+    }
+
     // Permissions onboarding
     fun hasCompletedPermissionsOnboarding(): Boolean {
         return prefs.getBoolean(KEY_HAS_COMPLETED_PERMISSIONS_ONBOARDING, false)
@@ -81,5 +106,7 @@ class CalmMusicSettingsManager(context: Context) {
         private const val KEY_LAST_APPLE_MUSIC_SYNC_MILLIS = "last_apple_music_sync_millis"
         private const val KEY_LAST_LOCAL_LIBRARY_SCAN_MILLIS = "last_local_library_scan_millis"
         private const val KEY_HAS_COMPLETED_PERMISSIONS_ONBOARDING = "has_completed_permissions_onboarding"
+        private const val KEY_STREAMING_PROVIDER = "streaming_provider"
+        private const val KEY_DOWNLOAD_FOLDER_URI = "download_folder_uri"
     }
 }

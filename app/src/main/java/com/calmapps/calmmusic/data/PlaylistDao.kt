@@ -80,4 +80,12 @@ interface PlaylistDao {
             "ORDER BY pt.position"
     )
     suspend fun getSongsForPlaylist(playlistId: String): List<SongEntity>
+
+    /**
+     * Update all playlist_tracks rows that reference [oldSongId] so that they
+     * instead reference [newSongId]. Used when a streaming track is replaced
+     * by a downloaded local file.
+     */
+    @Query("UPDATE playlist_tracks SET songId = :newSongId WHERE songId = :oldSongId")
+    suspend fun updateSongIdForAllPlaylists(oldSongId: String, newSongId: String)
 }

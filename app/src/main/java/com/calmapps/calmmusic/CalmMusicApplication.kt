@@ -58,6 +58,14 @@ class CalmMusic : Application(), DefaultLifecycleObserver {
         AppleMusicApiClientImpl.create(tokenProvider = tokenProvider)
     }
 
+    val youTubeSearchClient: YouTubeMusicSearchClient by lazy {
+        YouTubeMusicSearchClientImpl.create()
+    }
+
+    val youTubeStreamResolver: YouTubeStreamResolver by lazy {
+        YouTubeStreamResolver()
+    }
+
     val playbackStateManager: PlaybackStateManager by lazy {
         PlaybackStateManager()
     }

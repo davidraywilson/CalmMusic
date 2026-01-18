@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.PlaylistAdd
@@ -66,6 +68,10 @@ fun NowPlayingScreen(
     onBackClick: () -> Unit = {},
     isVideo: Boolean = false,
     player: Player? = null,
+    canDownload: Boolean = false,
+    onDownloadClick: () -> Unit = {},
+    canAddToLibrary: Boolean = false,
+    onAddToLibraryClick: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -260,10 +266,28 @@ fun NowPlayingScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Bottom row for secondary actions (e.g. shuffle, repeat, add to playlist)
+        // Bottom row for secondary actions (e.g. shuffle, repeat, add to playlist / library)
         Row(
             modifier = Modifier.fillMaxWidth()
         ) {
+            if (canAddToLibrary) {
+                IconButton(onClick = onAddToLibraryClick) {
+                    Icon(
+                        imageVector = Icons.Outlined.LibraryAdd,
+                        contentDescription = "Add to library",
+                    )
+                }
+            }
+
+            if (canDownload) {
+                IconButton(onClick = onDownloadClick) {
+                    Icon(
+                        imageVector = Icons.Outlined.Download,
+                        contentDescription = "Download",
+                    )
+                }
+            }
+
             IconButton(onClick = onAddToPlaylistClick) {
                 Icon(
                     imageVector = Icons.Outlined.PlaylistAdd,
@@ -345,5 +369,9 @@ private fun NowPlayingScreenPreview() {
         onAddToPlaylistClick = {},
         isVideo = false,
         player = null,
+        canDownload = false,
+        onDownloadClick = {},
+        canAddToLibrary = false,
+        onAddToLibraryClick = {},
     )
 }

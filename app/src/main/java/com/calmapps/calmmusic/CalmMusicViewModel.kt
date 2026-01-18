@@ -9,11 +9,14 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.apple.android.music.playback.model.PlaybackRepeatMode
+import com.calmapps.calmmusic.data.AlbumEntity
+import com.calmapps.calmmusic.data.ArtistEntity
 import com.calmapps.calmmusic.data.CalmMusicDatabase
 import com.calmapps.calmmusic.data.LibraryRepository
 import com.calmapps.calmmusic.data.NowPlayingSnapshot
 import com.calmapps.calmmusic.data.NowPlayingStorage
 import com.calmapps.calmmusic.data.NowPlayingRepeatModeKeys
+import com.calmapps.calmmusic.data.SongEntity
 import com.calmapps.calmmusic.playback.PlaybackCoordinator
 import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.ArtistUiModel
@@ -678,6 +681,46 @@ class CalmMusicViewModel(
         }
     }
 
+    suspend fun playYouTubeSong(
+        song: SongUiModel,
+        localController: MediaController?,
+    ) {
+        if (localController == null) return
+
+        val app = getApplication() as CalmMusic
+        // For YouTube, we consistently treat SongUiModel.id as the videoId.
+        val videoId = song.id
+
+        val url = app.youTubeStreamResolver.getBestAudioUrl(videoId)
+
+        withContext(Dispatchers.Main) {
+            localController.setMediaItem(MediaItem.fromUri(url))
+            localController.prepare()
+            localController.playWhenReady = true
+
+            val updatedSong = song.copy(
+                sourceType = "YOUTUBE",
+                audioUri = url,
+            )
+
+            val newState = PlaybackState(
+                playbackQueue = listOf(updatedSong),
+                playbackQueueIndex = 0,
+                originalPlaybackQueue = emptyList(),
+                repeatMode = RepeatMode.OFF,
+                isShuffleOn = false,
+                currentSongId = updatedSong.id,
+                nowPlayingSong = updatedSong,
+                isPlaybackPlaying = true,
+                nowPlayingPositionMs = 0L,
+                nowPlayingDurationMs = updatedSong.durationMillis ?: 0L,
+            )
+
+            _playbackState.value = newState
+            persistPlaybackSnapshot(newState)
+        }
+    }
+
     fun startLocalPlaybackMonitoring(controller: MediaController) {
         localPlaybackMonitorJob?.cancel()
         localPlaybackMonitorJob = viewModelScope.launch {
@@ -761,6 +804,141 @@ class CalmMusicViewModel(
             artists = result.artists,
         )
         return result
+    }
+
+    /**
+     * Add a streaming song (currently YouTube) into the persistent library so it
+     * appears alongside local and Apple Music songs.
+     */
+    suspend fun addStreamingSongToLibrary(song: SongUiModel) {
+        // For now we only support YouTube streaming entries.
+        if (song.sourceType != "YOUTUBE") return
+
+        try {
+            withContext(Dispatchers.IO) {
+                val artistName = song.artist.takeIf { it.isNotBlank() } ?: "Unknown artist"
+                val albumName = song.album?.takeIf { it.isNotBlank() }
+
+                fun String.toIdComponent(): String =
+                    trim()
+                        .replace(Regex("\\s+"), " ")
+                        .lowercase()
+
+                val artistKey = artistName.toIdComponent()
+                val albumKey = albumName?.toIdComponent()
+
+                val artistId = "YOUTUBE:$artistKey"
+                val albumId = if (albumKey != null) {
+                    "YOUTUBE:$artistKey:$albumKey"
+                } else null
+
+                val songEntity = SongEntity(
+                    id = song.id,
+                    title = song.title,
+                    artist = artistName,
+                    album = albumName,
+                    albumId = albumId,
+                    discNumber = song.discNumber,
+                    trackNumber = song.trackNumber,
+                    durationMillis = song.durationMillis,
+                    sourceType = "YOUTUBE",
+                    // For streaming, we treat audioUri as the videoId; the actual
+                    // stream URL is resolved on demand via YouTubeStreamResolver.
+                    audioUri = song.id,
+                    artistId = artistId,
+                    releaseYear = null,
+                    localLastModifiedMillis = null,
+                    localFileSizeBytes = null,
+                )
+
+                val artistEntity = ArtistEntity(
+                    id = artistId,
+                    name = artistName,
+                    sourceType = "YOUTUBE",
+                )
+
+                val albumEntity = if (albumId != null && albumName != null) {
+                    AlbumEntity(
+                        id = albumId,
+                        name = albumName,
+                        artist = artistName,
+                        sourceType = "YOUTUBE",
+                        artistId = artistId,
+                    )
+                } else null
+
+                artistDao.upsertAll(listOf(artistEntity))
+                if (albumEntity != null) {
+                    albumDao.upsertAll(listOf(albumEntity))
+                }
+                songDao.upsertAll(listOf(songEntity))
+            }
+
+            // Refresh in-memory library snapshot from the database so the
+            // streaming song immediately appears in Songs/Albums/Artists views.
+            val (allSongs, allAlbums) = withContext(Dispatchers.IO) {
+                val songsFromDb = songDao.getAllSongs()
+                val albumsFromDb = albumDao.getAllAlbums()
+                songsFromDb to albumsFromDb
+            }
+            val allArtistsWithCounts = withContext(Dispatchers.IO) {
+                artistDao.getAllArtistsWithCounts()
+            }
+
+            val songModels = allSongs.map { entity ->
+                SongUiModel(
+                    id = entity.id,
+                    title = entity.title,
+                    artist = entity.artist,
+                    durationText = com.calmapps.calmmusic.formatDurationMillis(entity.durationMillis),
+                    durationMillis = entity.durationMillis,
+                    trackNumber = entity.trackNumber,
+                    sourceType = entity.sourceType,
+                    audioUri = entity.audioUri,
+                    album = entity.album,
+                )
+            }
+
+            val albumIdToYear: Map<String, Int?> = allSongs
+                .mapNotNull { entity ->
+                    val albumId = entity.albumId ?: return@mapNotNull null
+                    albumId to entity.releaseYear
+                }
+                .groupBy(
+                    keySelector = { it.first },
+                    valueTransform = { it.second },
+                )
+                .mapValues { (_, years) ->
+                    years.filterNotNull().maxOrNull()
+                }
+
+            val albumModels = allAlbums.map { album ->
+                AlbumUiModel(
+                    id = album.id,
+                    title = album.name,
+                    artist = album.artist,
+                    sourceType = album.sourceType,
+                    releaseYear = albumIdToYear[album.id],
+                )
+            }
+
+            val artistModels = allArtistsWithCounts.map { artist ->
+                ArtistUiModel(
+                    id = artist.id,
+                    name = artist.name,
+                    songCount = artist.songCount,
+                    albumCount = artist.albumCount,
+                )
+            }
+
+            updateLibrary(
+                songs = songModels,
+                albums = albumModels,
+                artists = artistModels,
+            )
+        } catch (_: Exception) {
+            // Let the caller decide how to surface errors to the user.
+        }
     }
 
     fun updateLibrary(

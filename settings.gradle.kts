@@ -12,6 +12,7 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven { url = uri("https://mudita.jfrog.io/artifactory/mmd-release") }
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

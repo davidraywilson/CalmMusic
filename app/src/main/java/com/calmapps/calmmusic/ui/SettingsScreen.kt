@@ -39,6 +39,8 @@ import com.mudita.mmd.components.text.TextMMD
 fun SettingsScreen(
     selectedTab: Int,
     onSelectedTabChange: (Int) -> Unit,
+    streamingProvider: com.calmapps.calmmusic.data.StreamingProvider,
+    onStreamingProviderChange: (com.calmapps.calmmusic.data.StreamingProvider) -> Unit,
     includeLocalMusic: Boolean,
     localFolders: List<String>,
     isAppleMusicAuthenticated: Boolean,
@@ -126,7 +128,6 @@ fun SettingsScreen(
                 }
             }
         } else if (selectedTab == 1) {
-            // Streaming tab - Apple Music settings
             LazyColumnMMD(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.Top,
@@ -138,10 +139,56 @@ fun SettingsScreen(
                             .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
                     ) {
                         TextMMD(
-                            text = "Apple Music",
+                            text = "Streaming source",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onStreamingProviderChange(com.calmapps.calmmusic.data.StreamingProvider.APPLE_MUSIC) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextMMD(
+                                text = "Apple Music",
+                                fontSize = 16.sp,
+                                modifier = Modifier.weight(1f),
+                            )
+                            SwitchMMD(
+                                checked = streamingProvider == com.calmapps.calmmusic.data.StreamingProvider.APPLE_MUSIC,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        onStreamingProviderChange(com.calmapps.calmmusic.data.StreamingProvider.APPLE_MUSIC)
+                                    }
+                                },
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onStreamingProviderChange(com.calmapps.calmmusic.data.StreamingProvider.YOUTUBE) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextMMD(
+                                text = "YouTube Music (via NewPipe)",
+                                fontSize = 16.sp,
+                                modifier = Modifier.weight(1f),
+                            )
+                            SwitchMMD(
+                                checked = streamingProvider == com.calmapps.calmmusic.data.StreamingProvider.YOUTUBE,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        onStreamingProviderChange(com.calmapps.calmmusic.data.StreamingProvider.YOUTUBE)
+                                    }
+                                },
+                            )
+                        }
 
                         Spacer(modifier = Modifier.height(8.dp))
 
@@ -149,12 +196,21 @@ fun SettingsScreen(
                     }
                 }
 
+                // Apple Music connection section (always visible)
                 item {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
                     ) {
+                        TextMMD(
+                            text = "Apple Music",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
                         TextMMD(
                             text = if (isAppleMusicAuthenticated) "Apple Music is connected" else "Apple Music is not connected",
                             fontSize = 16.sp,

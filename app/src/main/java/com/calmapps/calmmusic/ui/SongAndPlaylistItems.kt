@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
@@ -39,7 +40,7 @@ fun SongItem(
     onClick: () -> Unit,
     showDivider: Boolean = true,
 ) {
-    val (isLocal, isMp4, subtitle) = remember(
+    val (isLocal, subtitle) = remember(
         song.id,
         song.audioUri,
         song.artist,
@@ -59,7 +60,6 @@ fun SongItem(
             ""
         }
         val mp4 = local && fileExtension == "mp4"
-
         val baseArtist = song.artist.ifBlank { if (local) "Local file" else "" }
         val prefix = if (mp4) "MP4 • " else ""
 
@@ -73,7 +73,7 @@ fun SongItem(
             }
         }
 
-        Triple(local, mp4, sub)
+        Pair(local, sub)
     }
 
     Column(
@@ -117,13 +117,28 @@ fun SongItem(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
 
-                TextMMD(
-                    text = subtitle,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Normal,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (!isLocal) {
+                        Icon(
+                            imageVector = Icons.Outlined.Cloud,
+                            contentDescription = "Streaming source",
+                            modifier = Modifier
+                                .size(16.dp)
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
+                    TextMMD(
+                        text = subtitle,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
 
