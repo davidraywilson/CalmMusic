@@ -44,6 +44,7 @@ fun SongItem(
         song.id,
         song.audioUri,
         song.artist,
+        song.album,
         song.durationText,
         song.sourceType,
     ) {
@@ -61,16 +62,29 @@ fun SongItem(
         }
         val mp4 = local && fileExtension == "mp4"
         val baseArtist = song.artist.ifBlank { if (local) "Local file" else "" }
+        val album = song.album?.takeIf { it.isNotBlank() }
+        val durationText = song.durationText?.takeIf { it.isNotBlank() }
         val prefix = if (mp4) "MP4 • " else ""
 
-        val sub = if (!song.durationText.isNullOrBlank()) {
-            "$prefix${baseArtist} • ${song.durationText}"
-        } else {
-            when {
-                baseArtist.isNotBlank() -> "$prefix$baseArtist"
-                prefix.isNotBlank() -> prefix.trimEnd(' ', '•')
-                else -> ""
+        val coreSubtitle = buildString {
+            if (!album.isNullOrBlank()) {
+                append(album)
             }
+            if (baseArtist.isNotBlank()) {
+                if (isNotEmpty()) append(" • ")
+                append(baseArtist)
+            }
+            if (!durationText.isNullOrBlank()) {
+                if (isNotEmpty()) append(" • ")
+                append(durationText)
+            }
+        }
+
+        val sub = when {
+            coreSubtitle.isNotBlank() && prefix.isNotBlank() -> prefix + coreSubtitle
+            coreSubtitle.isNotBlank() -> coreSubtitle
+            prefix.isNotBlank() -> prefix.trimEnd(' ', '•')
+            else -> ""
         }
 
         Pair(local, sub)

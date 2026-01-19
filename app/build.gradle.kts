@@ -31,6 +31,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
+        // Enable core library desugaring for Java 8+ APIs used by NewPipeExtractor
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -97,6 +99,9 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.3.1")
 
     implementation("com.github.teamnewpipe:NewPipeExtractor:v0.24.8")
+
+    // Core library desugaring for Java 8+ APIs (URLEncoder.encode with Charset, etc.)
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.4")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

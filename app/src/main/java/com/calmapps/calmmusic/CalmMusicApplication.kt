@@ -14,6 +14,7 @@ import com.calmapps.calmmusic.data.CalmMusicSettingsManager
 import com.calmapps.calmmusic.data.NowPlayingStorage
 import com.calmapps.calmmusic.data.PlaybackStateManager
 import com.calmapps.calmmusic.overlay.SystemOverlayService
+import okhttp3.OkHttpClient
 
 class CalmMusic : Application(), DefaultLifecycleObserver {
 
@@ -60,6 +61,11 @@ class CalmMusic : Application(), DefaultLifecycleObserver {
 
     val youTubeSearchClient: YouTubeMusicSearchClient by lazy {
         YouTubeMusicSearchClientImpl.create()
+    }
+
+    val youTubeInnertubeClient: YouTubeMusicInnertubeClient by lazy {
+        val client = OkHttpClient.Builder().build()
+        YouTubeMusicInnertubeClientImpl(client)
     }
 
     val youTubeStreamResolver: YouTubeStreamResolver by lazy {

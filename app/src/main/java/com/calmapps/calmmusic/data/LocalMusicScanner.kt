@@ -121,44 +121,16 @@ object LocalMusicScanner {
                 continue
             }
 
-            val meta = extractMetadata(context, candidate.uri)
-            val titleFromName = candidate.name.substringBeforeLast('.', candidate.name)
-
-            val trackArtist = meta.artist.orEmpty().trim()
-            val primaryArtistDisplay = (meta.albumArtist ?: meta.artist).orEmpty().trim()
-            val albumNameDisplay = meta.album?.trim()?.takeIf { it.isNotBlank() }
-            val primaryArtistIdComponent = primaryArtistDisplay
-                .takeIf { it.isNotBlank() }
-                ?.normalizeForIdComponent()
-
-            val albumNameIdComponent = albumNameDisplay
-                ?.normalizeForIdComponent()
-
-            val artistId = primaryArtistIdComponent?.let { "LOCAL_FILE:$it" }
-
-            val albumId = if (albumNameIdComponent != null && primaryArtistIdComponent != null) {
-                "LOCAL_FILE:${primaryArtistIdComponent}:${albumNameIdComponent}"
-            } else null
-
-            val uriString = candidate.uri.toString()
-            result.add(
-                SongEntity(
-                    id = uriString,
-                    title = meta.title ?: titleFromName,
-                    artist = trackArtist,
-                    album = albumNameDisplay,
-                    albumId = albumId,
-                    discNumber = meta.discNumber,
-                    trackNumber = meta.trackNumber,
-                    durationMillis = meta.durationMillis,
-                    sourceType = "LOCAL_FILE",
-                    audioUri = uriString,
-                    artistId = artistId,
-                    releaseYear = meta.year,
-                    localLastModifiedMillis = candidate.lastModified,
-                    localFileSizeBytes = candidate.fileSize,
-                ),
+            val song = buildSongEntityFromFile(
+                context = context,
+                uri = candidate.uri,
+                name = candidate.name,
+                lastModified = candidate.lastModified,
+                fileSize = candidate.fileSize,
+                existing = existing,
             )
+
+            result.add(song)
 
             processed++
             maybeReportProgress()
@@ -167,6 +139,67 @@ object LocalMusicScanner {
         onProgress(processed, total.coerceAtLeast(processed))
 
         return result
+    }
+
+    fun buildSongEntityFromFile(
+        context: Context,
+        uri: Uri,
+        name: String,
+        lastModified: Long,
+        fileSize: Long,
+        existing: SongEntity? = null,
+    ): SongEntity {
+        val meta = extractMetadata(context, uri)
+        val titleFromName = name.substringBeforeLast('.', name)
+
+        val existingArtist = existing?.artist?.takeIf { it.isNotBlank() }
+        val existingAlbum = existing?.album?.takeIf { it.isNotBlank() }
+        val existingArtistId = existing?.artistId
+        val existingAlbumId = existing?.albumId
+
+        val trackArtist = (meta.artist?.takeIf { it.isNotBlank() } ?: existingArtist).orEmpty().trim()
+
+        val primaryArtistDisplayBase = when {
+            !meta.albumArtist.isNullOrBlank() -> meta.albumArtist
+            !meta.artist.isNullOrBlank() -> meta.artist
+            !existingArtist.isNullOrBlank() -> existingArtist
+            else -> null
+        }
+        val primaryArtistDisplay = primaryArtistDisplayBase?.trim().orEmpty()
+
+        val albumNameDisplay =
+            meta.album?.trim()?.takeIf { it.isNotBlank() } ?: existingAlbum
+
+        val primaryArtistIdComponent = primaryArtistDisplay
+            .takeIf { it.isNotBlank() }
+            ?.normalizeForIdComponent()
+
+        val albumNameIdComponent = albumNameDisplay
+            ?.normalizeForIdComponent()
+
+        val artistId = primaryArtistIdComponent?.let { "LOCAL_FILE:$it" } ?: existingArtistId
+
+        val albumId = if (albumNameIdComponent != null && primaryArtistIdComponent != null) {
+            "LOCAL_FILE:${primaryArtistIdComponent}:${albumNameIdComponent}"
+        } else existingAlbumId
+
+        val uriString = uri.toString()
+        return SongEntity(
+            id = uriString,
+            title = meta.title ?: existing?.title ?: titleFromName,
+            artist = trackArtist,
+            album = albumNameDisplay,
+            albumId = albumId,
+            discNumber = meta.discNumber ?: existing?.discNumber,
+            trackNumber = meta.trackNumber ?: existing?.trackNumber,
+            durationMillis = meta.durationMillis ?: existing?.durationMillis,
+            sourceType = "LOCAL_FILE",
+            audioUri = uriString,
+            artistId = artistId,
+            releaseYear = meta.year ?: existing?.releaseYear,
+            localLastModifiedMillis = lastModified,
+            localFileSizeBytes = fileSize,
+        )
     }
 
     private data class LocalMetadata(
