@@ -1,12 +1,14 @@
 package com.calmapps.calmmusic
 
 import android.app.Application
+import androidx.annotation.OptIn
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import com.apple.android.music.playback.model.PlaybackRepeatMode
 import com.calmapps.calmmusic.data.AlbumEntity
@@ -264,6 +266,7 @@ class CalmMusicViewModel(
         val repeatMode = previous.repeatMode
 
         val queueEntities = queue.map { it.toQueueEntity() }
+        val shouldShowInitialBuffering = song.sourceType != "LOCAL_FILE"
 
         val newState = previous.copy(
             playbackQueue = queue,
@@ -274,7 +277,7 @@ class CalmMusicViewModel(
             currentSongId = song.id,
             nowPlayingSong = song,
             isPlaybackPlaying = true,
-            isBuffering = true,
+            isBuffering = shouldShowInitialBuffering,
             nowPlayingPositionMs = 0L,
             nowPlayingDurationMs = song.durationMillis ?: 0L,
         )
@@ -369,6 +372,7 @@ class CalmMusicViewModel(
         }
 
         val nextSong = queue[targetIndex]
+        val shouldShowBuffering = nextSong.sourceType != "LOCAL_FILE"
 
         _playbackState.value = state.copy(
             playbackQueueIndex = targetIndex,
@@ -377,10 +381,30 @@ class CalmMusicViewModel(
             nowPlayingDurationMs = nextSong.durationMillis ?: state.nowPlayingDurationMs,
             nowPlayingPositionMs = 0L,
             isPlaybackPlaying = true,
-            isBuffering = true,
+            isBuffering = shouldShowBuffering,
         )
         persistPlaybackSnapshot()
 
+        val currentSong = state.nowPlayingSong
+        val controller = localController
+        val localMap = playbackCoordinator.localIndexByGlobal
+
+        val canUseLocalSeek =
+            controller != null &&
+                currentSong?.sourceType == "LOCAL_FILE" &&
+                nextSong.sourceType == "LOCAL_FILE" &&
+                localMap != null &&
+                localMap.size == queue.size
+
+        if (canUseLocalSeek) {
+            val targetLocalIndex = localMap!![targetIndex]
+            val nonNullController = controller!!
+            if (targetLocalIndex >= 0) {
+                nonNullController.seekTo(targetLocalIndex, 0L)
+                nonNullController.playWhenReady = true
+                return
+            }
+        }
 
         startPlaybackFromQueue(
             queue = queue,
@@ -406,6 +430,7 @@ class CalmMusicViewModel(
         }
 
         val prevSong = queue[targetIndex]
+        val shouldShowBuffering = prevSong.sourceType != "LOCAL_FILE"
 
         _playbackState.value = state.copy(
             playbackQueueIndex = targetIndex,
@@ -414,9 +439,30 @@ class CalmMusicViewModel(
             nowPlayingDurationMs = prevSong.durationMillis ?: state.nowPlayingDurationMs,
             nowPlayingPositionMs = 0L,
             isPlaybackPlaying = true,
-            isBuffering = true,
+            isBuffering = shouldShowBuffering,
         )
         persistPlaybackSnapshot()
+
+        val currentSong = state.nowPlayingSong
+        val controller = localController
+        val localMap = playbackCoordinator.localIndexByGlobal
+
+        val canUseLocalSeek =
+            controller != null &&
+                currentSong?.sourceType == "LOCAL_FILE" &&
+                prevSong.sourceType == "LOCAL_FILE" &&
+                localMap != null &&
+                localMap.size == queue.size
+
+        if (canUseLocalSeek) {
+            val targetLocalIndex = localMap!![targetIndex]
+            val nonNullController = controller!!
+            if (targetLocalIndex >= 0) {
+                nonNullController.seekTo(targetLocalIndex, 0L)
+                nonNullController.playWhenReady = true
+                return
+            }
+        }
 
         startPlaybackFromQueue(
             queue = queue,
@@ -537,57 +583,7 @@ class CalmMusicViewModel(
         }
     }
 
-    suspend fun playYouTubeSong(
-        song: SongUiModel,
-        localController: MediaController?,
-    ) {
-        if (localController == null) return
-
-        // For YouTube, we consistently treat SongUiModel.id as the videoId
-        // and delegate actual stream URL resolution to the PlaybackService's
-        // ResolvingDataSource.
-        val videoId = song.id
-
-        withContext(Dispatchers.Main) {
-            val mediaItem = MediaItem.Builder()
-                .setMediaId(videoId)
-                .setCustomCacheKey(videoId)
-                .setUri("https://www.youtube.com/watch?v=$videoId")
-                .build()
-
-            localController.setMediaItem(mediaItem)
-            localController.prepare()
-            localController.playWhenReady = true
-
-            val updatedSong = song.copy(
-                sourceType = "YOUTUBE",
-                // Store the videoId here; the actual stream URL is resolved
-                // on demand in the data source layer.
-                audioUri = videoId,
-            )
-
-            val queue = listOf(updatedSong)
-            val queueEntities = queue.map { it.toQueueEntity() }
-
-            val newState = PlaybackState(
-                playbackQueue = queue,
-                playbackQueueEntities = queueEntities,
-                playbackQueueIndex = 0,
-                originalPlaybackQueue = emptyList(),
-                repeatMode = RepeatMode.OFF,
-                isShuffleOn = false,
-                currentSongId = updatedSong.id,
-                nowPlayingSong = updatedSong,
-                isPlaybackPlaying = true,
-                nowPlayingPositionMs = 0L,
-                nowPlayingDurationMs = updatedSong.durationMillis ?: 0L,
-            )
-
-            _playbackState.value = newState
-            persistPlaybackSnapshot(newState)
-        }
-    }
-
+    @OptIn(UnstableApi::class)
     private suspend fun playYouTubeSongInQueue(
         song: SongUiModel,
         targetIndex: Int,
@@ -640,8 +636,6 @@ class CalmMusicViewModel(
         localPlaybackMonitorJob?.cancel()
         localPlaybackMonitorJob = viewModelScope.launch {
             var lastLocalQueueIndex: Int? = null
-            // Use a dynamic polling interval so we back off when playback is
-            // idle or when the current song is not handled by the local controller.
             val fastIntervalMs = 750L
             val slowIntervalMs = 2000L
 
@@ -666,12 +660,14 @@ class CalmMusicViewModel(
                 val position = controller.currentPosition
                 val duration = controller.duration
                 val playbackState = controller.playbackState
+                val isBufferingNow =
+                    !isLocalFile && playbackState == Player.STATE_BUFFERING
 
                 var newState = state.copy(
                     isPlaybackPlaying = isPlaying,
                     nowPlayingPositionMs = position,
                     nowPlayingDurationMs = if (duration > 0) duration else state.nowPlayingDurationMs,
-                    isBuffering = playbackState == Player.STATE_BUFFERING,
+                    isBuffering = isBufferingNow,
                 )
 
                 if (isLocalFile) {
@@ -741,7 +737,6 @@ class CalmMusicViewModel(
                             }
                         }
                     } else if (playbackState == Player.STATE_READY && isPlaying) {
-                        // Reset guard once a new YouTube track actually starts playing.
                         lastCompletedYouTubeSongId = null
                     }
                 }
@@ -852,8 +847,6 @@ class CalmMusicViewModel(
                 songDao.upsertAll(listOf(songEntity))
             }
 
-            // Refresh in-memory library snapshot from the database so the
-            // streaming song immediately appears in Songs/Albums/Artists views.
             refreshLibraryFromDatabase()
         } catch (_: Exception) {
             // Let the caller decide how to surface errors to the user.
