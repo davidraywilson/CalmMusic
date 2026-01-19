@@ -157,12 +157,10 @@ class PlaybackService : MediaSessionService() {
 
             val app = application as CalmMusic
 
+            // Always resolve YouTube playback URLs via NewPipe (YouTubeStreamResolver).
+            // Innertube/Piped is still used for search/metadata elsewhere.
             val resolvedUrl = runBlocking(Dispatchers.IO) {
-                try {
-                    app.youTubeInnertubeClient.getBestAudioUrl(videoId)
-                } catch (_: Exception) {
-                    app.youTubeStreamResolver.getBestAudioUrl(videoId)
-                }
+                app.youTubeStreamResolver.getBestAudioUrl(videoId)
             }
 
             val expiresAt = now + YOUTUBE_URL_TTL_MS

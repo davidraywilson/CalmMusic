@@ -183,21 +183,41 @@ fun CalmMusic(app: CalmMusic) {
 
     val viewModel: CalmMusicViewModel = viewModel(factory = CalmMusicViewModel.factory(app))
     val playbackState by viewModel.playbackState.collectAsState()
+    val downloadStatuses by app.youTubeDownloadManager.downloads.collectAsState()
+
+    // Refresh the in-memory library snapshot whenever one or more downloads
+    // transition into the COMPLETED state so that newly downloaded tracks
+    // appear in Songs/Albums/Artists without requiring a full rescan.
+    var lastCompletedDownloadIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(downloadStatuses) {
+        val completedNow = downloadStatuses
+            .filter { it.state == YouTubeDownloadStatus.State.COMPLETED }
+            .map { it.id }
+            .toSet()
+        val newCompleted = completedNow - lastCompletedDownloadIds
+        if (newCompleted.isNotEmpty()) {
+            viewModel.refreshLibraryFromDatabase()
+        }
+        lastCompletedDownloadIds = completedNow
+    }
 
     // Local music settings state (needed by download/rescan flows)
     val includeLocalMusicState = settingsManager.includeLocalMusic.collectAsState()
     val localMusicFoldersState = settingsManager.localMusicFolders.collectAsState()
     val includeLocalMusic = includeLocalMusicState.value
     val localMusicFolders = localMusicFoldersState.value
-    
-    // For choosing a CalmMusic download folder (for YouTube downloads)
+
+    // Download state for YouTube tracks (first-time folder picking only). The
+    // actual download work and progress tracking lives in YouTubeDownloadManager.
     var pendingDownloadSong by remember { mutableStateOf<SongUiModel?>(null) }
     val downloadFolderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
         val songToDownload = pendingDownloadSong
         pendingDownloadSong = null
-        if (uri == null || songToDownload == null) return@rememberLauncherForActivityResult
+        if (uri == null || songToDownload == null) {
+            return@rememberLauncherForActivityResult
+        }
 
         val context = appContext
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -226,29 +246,17 @@ fun CalmMusic(app: CalmMusic) {
         settingsManager.setDownloadFolderUri(calmUriString)
         settingsManager.addLocalMusicFolder(calmUriString)
 
-        // Start the actual download in the chosen CalmMusic folder. We ingest
-        // the new file directly into the database and then refresh the
-        // in-memory library snapshot without performing a full folder rescan.
+        // Kick off the download via the shared manager. Progress and completion
+        // are reflected in the manager's StateFlow and can be observed from the
+        // Now Playing screen or the Downloads tab in settings.
+        app.youTubeDownloadManager.enqueueDownload(songToDownload)
+
         libraryScope.launch {
-            if (songToDownload != null) {
-                val ok = performYouTubeDownload(app, viewModel, songToDownload, calmMusicDir, appContext)
-                if (ok && includeLocalMusic) {
-                    try {
-                        viewModel.resyncLocalLibrary(
-                            includeLocal = includeLocalMusic,
-                            folders = localMusicFolders,
-                            onScanProgress = {},
-                            onIngestProgress = {},
-                        )
-                    } catch (_: Exception) {
-                    }
-                }
-                snackbarHostState.showSnackbar(
-                    message = if (ok) "Downloaded to CalmMusic folder" else "Couldn't download track",
-                    withDismissAction = false,
-                    duration = SnackbarDurationMMD.Short,
-                )
-            }
+            snackbarHostState.showSnackbar(
+                message = "Download started",
+                withDismissAction = false,
+                duration = SnackbarDurationMMD.Short,
+            )
         }
     }
 
@@ -1246,6 +1254,28 @@ fun CalmMusic(app: CalmMusic) {
                         }
                     }
 
+                    val downloadsFolderPickerLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.OpenDocumentTree(),
+                    ) { uri ->
+                        if (uri != null) {
+                            val flags =
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                            try {
+                                context.contentResolver.takePersistableUriPermission(uri, flags)
+                            } catch (_: SecurityException) {
+                            }
+                            val baseDir = DocumentFile.fromTreeUri(context, uri)
+                            if (baseDir != null) {
+                                val calmMusicDir = baseDir.findFile("CalmMusic")?.takeIf { it.isDirectory }
+                                    ?: baseDir.createDirectory("CalmMusic")
+                                    ?: baseDir
+                                val calmUriString = calmMusicDir.uri.toString()
+                                settingsManager.setDownloadFolderUri(calmUriString)
+                                settingsManager.addLocalMusicFolder(calmUriString)
+                            }
+                        }
+                    }
+
                     fun requestBatteryOptimizationExemption() {
                         val powerManager = context.getSystemService(PowerManager::class.java)
                         if (powerManager != null && !powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
@@ -1294,6 +1324,11 @@ fun CalmMusic(app: CalmMusic) {
                         localScanSkippedUnchanged = localScanSkippedUnchanged,
                         localScanIndexedNewOrUpdated = localScanIndexedNewOrUpdated,
                         localScanDeletedMissing = localScanDeletedMissing,
+                        downloads = downloadStatuses,
+                        currentDownloadFolder = settingsManager.getDownloadFolderUri(),
+                        onChangeDownloadFolderClick = { downloadsFolderPickerLauncher.launch(null) },
+                        onCancelDownloadClick = { id -> app.youTubeDownloadManager.cancelDownload(id) },
+                        onClearFinishedDownloadsClick = { app.youTubeDownloadManager.clearFinishedDownloads() },
                     )
                 }
             }
@@ -1362,6 +1397,7 @@ fun CalmMusic(app: CalmMusic) {
                         isVideo = isLocalVideo,
                         player = if (isLocalVideo) localMediaController else null,
                         canDownload = (streamingProvider == StreamingProvider.YOUTUBE && song.sourceType == "YOUTUBE"),
+                        isDownloadInProgress = downloadStatuses.any { it.songId == song.id && (it.state == YouTubeDownloadStatus.State.PENDING || it.state == YouTubeDownloadStatus.State.IN_PROGRESS) },
                         onDownloadClick = {
                             val existingDownloadFolder = settingsManager.getDownloadFolderUri()
                             if (existingDownloadFolder == null) {
@@ -1369,39 +1405,20 @@ fun CalmMusic(app: CalmMusic) {
                                 pendingDownloadSong = song
                                 downloadFolderPickerLauncher.launch(null)
                             } else {
-                                val context = appContext
-                                val folderUri = try {
-                                    existingDownloadFolder.toUri()
-                                } catch (_: Exception) {
-                                    pendingDownloadSong = song
-                                    downloadFolderPickerLauncher.launch(null)
-                                    return@NowPlayingScreen
-                                }
-                                val dir = DocumentFile.fromTreeUri(context, folderUri)
-                                if (dir == null) {
-                                    pendingDownloadSong = song
-                                    downloadFolderPickerLauncher.launch(null)
-                                    return@NowPlayingScreen
-                                }
+                                app.youTubeDownloadManager.enqueueDownload(song)
                                 libraryScope.launch {
-                                    val ok = performYouTubeDownload(app, viewModel, song, dir, appContext)
-                                    if (ok && includeLocalMusic) {
-                                        try {
-                                            viewModel.resyncLocalLibrary(
-                                                includeLocal = includeLocalMusic,
-                                                folders = localMusicFolders,
-                                                onScanProgress = {},
-                                                onIngestProgress = {},
-                                            )
-                                        } catch (_: Exception) {
-                                        }
-                                    }
                                     snackbarHostState.showSnackbar(
-                                        message = if (ok) "Downloaded to CalmMusic folder" else "Couldn't download track",
+                                        message = "Download started",
                                         withDismissAction = false,
                                         duration = SnackbarDurationMMD.Short,
                                     )
                                 }
+                            }
+                        },
+                        onCancelDownloadClick = {
+                            val active = downloadStatuses.firstOrNull { it.songId == song.id && (it.state == YouTubeDownloadStatus.State.PENDING || it.state == YouTubeDownloadStatus.State.IN_PROGRESS) }
+                            if (active != null) {
+                                app.youTubeDownloadManager.cancelDownload(active.id)
                             }
                         },
                         canAddToLibrary = (streamingProvider == StreamingProvider.YOUTUBE && song.sourceType == "YOUTUBE"),
@@ -1781,139 +1798,6 @@ fun CalmMusic(app: CalmMusic) {
                 snackbarHostState
             )
         }
-    }
-}
-
-private suspend fun performYouTubeDownload(
-    app: CalmMusic,
-    viewModel: CalmMusicViewModel,
-    song: SongUiModel,
-    targetDir: DocumentFile,
-    context: android.content.Context,
-): Boolean {
-    return try {
-        val videoId = song.id
-
-        // 1) Download the audio stream into the CalmMusic folder.
-        val targetFile = withContext(Dispatchers.IO) {
-            val streamUrl = app.youTubeInnertubeClient.getBestAudioUrl(videoId)
-
-            val safeTitle = (song.title.ifBlank { videoId })
-                .replace(Regex("""[\\\\/:*?\"<>|]"""), "_")
-            val fileName = "$safeTitle.m4a"
-
-            val downloadsDir = targetDir
-            val target = downloadsDir.findFile(fileName)
-                ?: downloadsDir.createFile("audio/mp4", fileName)
-            if (target == null) {
-                throw IllegalStateException("Could not create target file")
-            }
-
-            val request = okhttp3.Request.Builder()
-                .url(streamUrl)
-                .build()
-
-            val client = okhttp3.OkHttpClient()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw IllegalStateException("Download failed: ${'$'}{response.code}")
-                }
-                val body = response.body ?: throw IllegalStateException("Empty body")
-                context.contentResolver.openOutputStream(target.uri)?.use { out ->
-                    body.byteStream().use { input ->
-                        input.copyTo(out)
-                    }
-                } ?: throw IllegalStateException("Cannot open output stream")
-            }
-
-            target
-        }
-
-        // 2) Update the database so the downloaded version replaces the
-        //    streaming version everywhere (songs, playlists, etc.), and make
-        //    sure artist/album metadata is wired into the local library.
-        withContext(Dispatchers.IO) {
-            val database = CalmMusicDatabase.getDatabase(app)
-            val songDao = database.songDao()
-            val albumDao = database.albumDao()
-            val artistDao = database.artistDao()
-            val playlistDao = database.playlistDao()
-
-            val fileUri = targetFile.uri
-            val fileUriString = fileUri.toString()
-            val localLastModified = targetFile.lastModified()
-            val localSize = targetFile.length()
-
-            val existingStreamingEntity = SongEntity(
-                id = videoId,
-                title = song.title,
-                artist = song.artist,
-                album = song.album,
-                albumId = null,
-                discNumber = song.discNumber,
-                trackNumber = song.trackNumber,
-                durationMillis = song.durationMillis,
-                sourceType = "YOUTUBE",
-                audioUri = song.audioUri ?: videoId,
-                artistId = null,
-                releaseYear = null,
-                localLastModifiedMillis = null,
-                localFileSizeBytes = null,
-            )
-
-            val localSongEntity = LocalMusicScanner.buildSongEntityFromFile(
-                context = context,
-                uri = fileUri,
-                name = targetFile.name ?: (song.title.ifBlank { videoId } + ".m4a"),
-                lastModified = localLastModified,
-                fileSize = localSize,
-                existing = existingStreamingEntity,
-            )
-
-            // Upsert artist/album rows when we have that metadata. This keeps
-            // downloaded YouTube tracks visible under Artists and Albums.
-            val artistId = localSongEntity.artistId
-            val albumId = localSongEntity.albumId
-            val displayArtistName = localSongEntity.artist
-            val displayAlbumName = localSongEntity.album
-
-            if (artistId != null && displayArtistName.isNotBlank()) {
-                val artistEntity = ArtistEntity(
-                    id = artistId,
-                    name = displayArtistName,
-                    sourceType = "LOCAL_FILE",
-                )
-                artistDao.upsertAll(listOf(artistEntity))
-            }
-
-            if (albumId != null && displayAlbumName != null) {
-                val albumEntity = AlbumEntity(
-                    id = albumId,
-                    name = displayAlbumName,
-                    artist = displayArtistName.takeIf { it.isNotBlank() },
-                    sourceType = "LOCAL_FILE",
-                    artistId = artistId,
-                )
-                albumDao.upsertAll(listOf(albumEntity))
-            }
-
-            // Insert/replace the local song row.
-            songDao.upsertAll(listOf(localSongEntity))
-
-            // Point all playlists at the new local song id instead of the
-            // streaming video id.
-            playlistDao.updateSongIdForAllPlaylists(oldSongId = videoId, newSongId = fileUriString)
-
-            // Remove the streaming entry so the library only sees the local
-            // version going forward.
-            songDao.deleteByIds(listOf(videoId))
-        }
-
-        viewModel.refreshLibraryFromDatabase()
-
-        true
-    } catch (_: Exception) {
-        false
     }
 }
 

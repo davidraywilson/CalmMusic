@@ -83,10 +83,20 @@ class CalmMusic : Application(), DefaultLifecycleObserver {
     lateinit var settingsManager: CalmMusicSettingsManager
         private set
 
+    // Manager for YouTube downloads, owned at the application level so that
+    // download state and jobs live beyond any single composable.
+    lateinit var youTubeDownloadManager: YouTubeDownloadManager
+        private set
+
     override fun onCreate() {
         super<Application>.onCreate()
 
         settingsManager = CalmMusicSettingsManager(this)
+        youTubeDownloadManager = YouTubeDownloadManager(
+            app = this,
+            settingsManager = settingsManager,
+            appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO),
+        )
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         appleMusicPlayer.setOnCurrentItemChangedListener { index ->
             if (index != null && index >= 0) {

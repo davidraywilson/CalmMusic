@@ -69,7 +69,9 @@ fun NowPlayingScreen(
     isVideo: Boolean = false,
     player: Player? = null,
     canDownload: Boolean = false,
+    isDownloadInProgress: Boolean = false,
     onDownloadClick: () -> Unit = {},
+    onCancelDownloadClick: () -> Unit = {},
     canAddToLibrary: Boolean = false,
     onAddToLibraryClick: () -> Unit = {},
 ) {
@@ -280,11 +282,20 @@ fun NowPlayingScreen(
             }
 
             if (canDownload) {
-                IconButton(onClick = onDownloadClick) {
-                    Icon(
-                        imageVector = Icons.Outlined.Download,
-                        contentDescription = "Download",
-                    )
+                if (isDownloadInProgress) {
+                    IconButton(onClick = onCancelDownloadClick) {
+                        CircularProgressIndicatorMMD(
+                            modifier = Modifier.size(24.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                } else {
+                    IconButton(onClick = onDownloadClick) {
+                        Icon(
+                            imageVector = Icons.Outlined.Download,
+                            contentDescription = "Download",
+                        )
+                    }
                 }
             }
 
@@ -370,7 +381,9 @@ private fun NowPlayingScreenPreview() {
         isVideo = false,
         player = null,
         canDownload = false,
+        isDownloadInProgress = false,
         onDownloadClick = {},
+        onCancelDownloadClick = {},
         canAddToLibrary = false,
         onAddToLibraryClick = {},
     )

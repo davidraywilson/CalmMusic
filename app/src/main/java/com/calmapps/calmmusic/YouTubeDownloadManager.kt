@@ -1,0 +1,275 @@
+package com.calmapps.calmmusic
+
+import android.content.Context
+import androidx.documentfile.provider.DocumentFile
+import com.calmapps.calmmusic.data.CalmMusicSettingsManager
+import com.calmapps.calmmusic.data.CalmMusicDatabase
+import com.calmapps.calmmusic.data.LocalMusicScanner
+import com.calmapps.calmmusic.data.SongEntity
+import com.calmapps.calmmusic.data.ArtistEntity
+import com.calmapps.calmmusic.data.AlbumEntity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.UUID
+
+/**
+ * Central manager for YouTube downloads so that download state (including progress)
+ * is owned outside of any single composable and can be surfaced in multiple places
+ * (Now Playing, Settings, etc.).
+ */
+data class YouTubeDownloadStatus(
+    val id: String,
+    val songId: String,
+    val title: String,
+    val artist: String,
+    val progress: Float,
+    val state: State,
+    val errorMessage: String? = null,
+) {
+    enum class State { PENDING, IN_PROGRESS, COMPLETED, FAILED, CANCELED }
+}
+
+class YouTubeDownloadManager(
+    private val app: CalmMusic,
+    private val settingsManager: CalmMusicSettingsManager,
+    private val appScope: CoroutineScope,
+) {
+    private val client = OkHttpClient()
+
+    private val _downloads = MutableStateFlow<List<YouTubeDownloadStatus>>(emptyList())
+    val downloads: StateFlow<List<YouTubeDownloadStatus>> = _downloads.asStateFlow()
+
+    private val jobsById = mutableMapOf<String, Job>()
+
+    fun enqueueDownload(song: com.calmapps.calmmusic.ui.SongUiModel) {
+        val downloadFolderUri = settingsManager.getDownloadFolderUri() ?: return
+
+        val id = UUID.randomUUID().toString()
+        val initial = YouTubeDownloadStatus(
+            id = id,
+            songId = song.id,
+            title = song.title,
+            artist = song.artist,
+            progress = 0f,
+            state = YouTubeDownloadStatus.State.PENDING,
+        )
+        _downloads.value = _downloads.value + initial
+
+        val job = appScope.launch {
+            val context = app.applicationContext
+            val folderUri = try {
+                android.net.Uri.parse(downloadFolderUri)
+            } catch (_: Exception) {
+                updateDownload(id) { it.copy(state = YouTubeDownloadStatus.State.FAILED, errorMessage = "Invalid download folder") }
+                return@launch
+            }
+            val baseDir = DocumentFile.fromTreeUri(context, folderUri)
+            if (baseDir == null) {
+                updateDownload(id) { it.copy(state = YouTubeDownloadStatus.State.FAILED, errorMessage = "Cannot access download folder") }
+                return@launch
+            }
+
+            // Use the persisted folder as the downloads directory. The folder
+            // is expected to already point at the CalmMusic subdirectory.
+            val downloadsDir = baseDir
+
+            updateDownload(id) { it.copy(state = YouTubeDownloadStatus.State.IN_PROGRESS) }
+
+            val ok = performYouTubeDownloadInternal(
+                app = app,
+                song = song,
+                targetDir = downloadsDir,
+                context = context,
+                client = client,
+                onProgress = { progress ->
+                    updateDownload(id) { status -> status.copy(progress = progress.coerceIn(0f, 1f)) }
+                },
+            )
+
+            updateDownload(id) { status ->
+                status.copy(
+                    progress = if (ok) 1f else status.progress,
+                    state = if (ok) YouTubeDownloadStatus.State.COMPLETED else YouTubeDownloadStatus.State.FAILED,
+                    errorMessage = if (ok) null else status.errorMessage,
+                )
+            }
+        }
+
+        jobsById[id] = job
+    }
+
+    fun cancelDownload(id: String) {
+        jobsById[id]?.cancel()
+        jobsById.remove(id)
+        updateDownload(id) { it.copy(state = YouTubeDownloadStatus.State.CANCELED) }
+    }
+
+    fun clearFinishedDownloads() {
+        _downloads.value = _downloads.value.filterNot { status ->
+            status.state == YouTubeDownloadStatus.State.COMPLETED ||
+                status.state == YouTubeDownloadStatus.State.FAILED ||
+                status.state == YouTubeDownloadStatus.State.CANCELED
+        }
+    }
+
+    private fun updateDownload(id: String, transform: (YouTubeDownloadStatus) -> YouTubeDownloadStatus) {
+        _downloads.value = _downloads.value.map { status ->
+            if (status.id == id) transform(status) else status
+        }
+    }
+}
+
+/**
+ * Shared internal implementation of the YouTube download pipeline. This is largely
+ * a refactoring of the previous performYouTubeDownload function, but with a
+ * progress callback and without UI dependencies.
+ */
+internal suspend fun performYouTubeDownloadInternal(
+    app: CalmMusic,
+    song: com.calmapps.calmmusic.ui.SongUiModel,
+    targetDir: DocumentFile,
+    context: Context,
+    client: OkHttpClient,
+    onProgress: (Float) -> Unit,
+): Boolean {
+    return try {
+        val videoId = song.id
+
+        // 1) Download the audio stream into the CalmMusic folder.
+        val targetFile = withContext(Dispatchers.IO) {
+            // Resolve a download-optimized audio stream URL via NewPipe, using a
+            // capped bitrate to keep file sizes (and download time) reasonable.
+            val streamUrl = app.youTubeStreamResolver.getDownloadAudioUrl(videoId)
+
+            val safeTitle = (song.title.ifBlank { videoId })
+                .replace(Regex("""[\\\\/:*?\"<>|]"""), "_")
+            val fileName = "$safeTitle.m4a"
+
+            val downloadsDir = targetDir
+            val target = downloadsDir.findFile(fileName)
+                ?: downloadsDir.createFile("audio/mp4", fileName)
+            if (target == null) {
+                throw IllegalStateException("Could not create target file")
+            }
+
+            val request = Request.Builder()
+                .url(streamUrl)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IllegalStateException("Download failed: ${'$'}{response.code}")
+                }
+                val body = response.body ?: throw IllegalStateException("Empty body")
+                val total = body.contentLength().takeIf { it > 0 } ?: -1L
+                context.contentResolver.openOutputStream(target.uri)?.use { out ->
+                    body.byteStream().use { input ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var read: Int
+                        var readSoFar = 0L
+                        while (input.read(buffer).also { read = it } != -1) {
+                            out.write(buffer, 0, read)
+                            if (total > 0) {
+                                readSoFar += read
+                                onProgress(readSoFar.toFloat() / total.toFloat())
+                            }
+                        }
+                    }
+                } ?: throw IllegalStateException("Cannot open output stream")
+            }
+
+            target
+        }
+
+        withContext(Dispatchers.IO) {
+            val settings = app.settingsManager
+            if (!settings.includeLocalMusic.value) {
+                settings.setIncludeLocalMusic(true)
+            }
+            val database = CalmMusicDatabase.getDatabase(app)
+            val songDao = database.songDao()
+            val albumDao = database.albumDao()
+            val artistDao = database.artistDao()
+            val playlistDao = database.playlistDao()
+
+            val fileUri = targetFile.uri
+            val fileUriString = fileUri.toString()
+            val localLastModified = targetFile.lastModified()
+            val localSize = targetFile.length()
+
+            val existingStreamingEntity = SongEntity(
+                id = videoId,
+                title = song.title,
+                artist = song.artist,
+                album = song.album,
+                albumId = null,
+                discNumber = song.discNumber,
+                trackNumber = song.trackNumber,
+                durationMillis = song.durationMillis,
+                sourceType = "YOUTUBE",
+                audioUri = song.audioUri ?: videoId,
+                artistId = null,
+                releaseYear = null,
+                localLastModifiedMillis = null,
+                localFileSizeBytes = null,
+            )
+
+            val localSongEntity = LocalMusicScanner.buildSongEntityFromFile(
+                context = context,
+                uri = fileUri,
+                name = targetFile.name ?: (song.title.ifBlank { videoId } + ".m4a"),
+                lastModified = localLastModified,
+                fileSize = localSize,
+                existing = existingStreamingEntity,
+            )
+
+            val artistId = localSongEntity.artistId
+            val albumId = localSongEntity.albumId
+            val displayArtistName = localSongEntity.artist
+            val displayAlbumName = localSongEntity.album
+
+            if (artistId != null && displayArtistName.isNotBlank()) {
+                val artistEntity = ArtistEntity(
+                    id = artistId,
+                    name = displayArtistName,
+                    sourceType = "LOCAL_FILE",
+                )
+                artistDao.upsertAll(listOf(artistEntity))
+            }
+
+            if (albumId != null && displayAlbumName != null) {
+                val albumEntity = AlbumEntity(
+                    id = albumId,
+                    name = displayAlbumName,
+                    artist = displayArtistName.takeIf { it.isNotBlank() },
+                    sourceType = "LOCAL_FILE",
+                    artistId = artistId,
+                )
+                albumDao.upsertAll(listOf(albumEntity))
+            }
+
+            songDao.upsertAll(listOf(localSongEntity))
+            playlistDao.updateSongIdForAllPlaylists(oldSongId = videoId, newSongId = fileUriString)
+            songDao.deleteByIds(listOf(videoId))
+        }
+
+        // After database updates, refresh library for the in-memory view.
+        withContext(Dispatchers.Main) {
+            // We go through the CalmMusicViewModel via a stored reference on the app
+            // is avoided here to keep the manager independent. The caller is
+            // responsible for refreshing the in-memory library if desired.
+        }
+
+        true
+    } catch (_: Exception) {
+        false
+    }
+}

@@ -45,23 +45,52 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
 
     /**
      * Resolve the best available audio stream URL for the given [videoId].
+     * This is intended for playback, so it prefers the highest available
+     * bitrate.
      */
-    suspend fun getBestAudioUrl(videoId: String): String = withContext(Dispatchers.IO) {
-        val url = "https://www.youtube.com/watch?v=$videoId"
-        try {
-            val service = NewPipe.getServiceByUrl(url) as YoutubeService
-            val streamInfo = service.getStreamExtractor(url).apply { fetchPage() }
+    suspend fun getBestAudioUrl(videoId: String): String =
+        getAudioUrl(videoId = videoId, maxBitrateKbps = null)
 
-            val audioStreams = streamInfo.audioStreams
-            val best = audioStreams.maxByOrNull { it.averageBitrate } ?: error("No audio streams")
-            val streamUrl = best.url ?: error("No URL for best audio stream")
-            streamUrl
-        } catch (e: ExtractionException) {
-            throw e
-        } catch (e: Exception) {
-            throw e
+    /**
+     * Resolve a download-friendly audio stream URL for [videoId], capping the
+     * bitrate to keep file sizes reasonable (and reduce download time) while
+     * still preferring higher-quality streams within that cap.
+     */
+    suspend fun getDownloadAudioUrl(videoId: String, maxBitrateKbps: Int = 160): String =
+        getAudioUrl(videoId = videoId, maxBitrateKbps = maxBitrateKbps)
+
+    private suspend fun getAudioUrl(videoId: String, maxBitrateKbps: Int?): String =
+        withContext(Dispatchers.IO) {
+            val url = "https://www.youtube.com/watch?v=$videoId"
+            try {
+                val service = NewPipe.getServiceByUrl(url) as YoutubeService
+                val streamInfo = service.getStreamExtractor(url).apply { fetchPage() }
+
+                val audioStreams = streamInfo.audioStreams
+                if (audioStreams.isEmpty()) error("No audio streams")
+
+                val candidates = audioStreams.filter { it.averageBitrate > 0 }
+                if (candidates.isEmpty()) error("No audio streams with bitrate")
+
+                val chosen = if (maxBitrateKbps == null) {
+                    // Playback: highest available bitrate
+                    candidates.maxByOrNull { it.averageBitrate }!!
+                } else {
+                    // Downloads: try to pick the highest bitrate <= cap; if none,
+                    // fall back to absolute highest.
+                    val capped = candidates.filter { it.averageBitrate <= maxBitrateKbps * 1000 }
+                    (capped.maxByOrNull { it.averageBitrate }
+                        ?: candidates.maxByOrNull { it.averageBitrate }
+                        ?: candidates.first())
+                }
+
+                chosen.url ?: error("No URL for chosen audio stream")
+            } catch (e: ExtractionException) {
+                throw e
+            } catch (e: Exception) {
+                throw e
+            }
         }
-    }
 
     private class OkHttpDownloader(private val client: OkHttpClient) : Downloader() {
 
