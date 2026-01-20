@@ -31,6 +31,7 @@ fun SearchScreen(
     onSelectedTabChange: (Int) -> Unit,
     onPlaySongClick: (SongUiModel) -> Unit,
     onAlbumClick: (AlbumUiModel) -> Unit,
+    librarySongIds: Set<String> = emptySet(),
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         if (!isAuthenticated) {
@@ -94,6 +95,7 @@ fun SearchScreen(
                                         isCurrentlyPlaying = false,
                                         onClick = { onPlaySongClick(song) },
                                         showDivider = song != songs.lastOrNull(),
+                                        isInLibrary = librarySongIds.contains(song.id),
                                     )
                                 }
                             }

@@ -63,6 +63,7 @@ import androidx.navigation.NavGraphBuilder
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.util.UnstableApi
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -104,6 +105,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     private val app: CalmMusic
+        @androidx.annotation.OptIn(UnstableApi::class)
         get() = application as CalmMusic
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -147,6 +149,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalmMusic(app: CalmMusic) {
@@ -191,6 +194,9 @@ fun CalmMusic(app: CalmMusic) {
     val localMusicFoldersState = settingsManager.localMusicFolders.collectAsState()
     val includeLocalMusic = includeLocalMusicState.value
     val localMusicFolders = localMusicFoldersState.value
+
+    val completeAlbumsWithYouTubeState = settingsManager.completeAlbumsWithYouTube.collectAsState()
+    val completeAlbumsWithYouTube = completeAlbumsWithYouTubeState.value
 
     // Download state for YouTube tracks (first-time folder picking only). The
     // actual download work and progress tracking lives in YouTubeDownloadManager.
@@ -301,7 +307,7 @@ fun CalmMusic(app: CalmMusic) {
     )
 
     val canNavigateBack = navController.previousBackStackEntry != null
-    
+
     var localMediaController by remember { mutableStateOf<MediaController?>(null) }
 
     val streamingProviderState = settingsManager.streamingProvider.collectAsState()
@@ -319,6 +325,11 @@ fun CalmMusic(app: CalmMusic) {
     }
 
     val librarySongs by viewModel.librarySongs.collectAsState()
+
+    val librarySongIds = remember(librarySongs) {
+        librarySongs.map { it.id }.toSet()
+    }
+
     val libraryAlbums by viewModel.libraryAlbums.collectAsState()
     val libraryArtists by viewModel.libraryArtists.collectAsState()
     val libraryPlaylistsState by playlistsViewModel.playlists.collectAsState()
@@ -1128,6 +1139,7 @@ fun CalmMusic(app: CalmMusic) {
                                 launchSingleTop = true
                             }
                         },
+                        librarySongIds = librarySongIds,
                     )
                 }
                 composable(Screen.AlbumDetails.route) {
@@ -1142,6 +1154,7 @@ fun CalmMusic(app: CalmMusic) {
                         onShuffleClick = { songs ->
                             startShuffledPlaybackFromQueue(songs)
                         },
+                        librarySongIds = librarySongIds,
                     )
                 }
                 composable(Screen.ArtistDetails.route) {
@@ -1244,6 +1257,10 @@ fun CalmMusic(app: CalmMusic) {
                         onStreamingProviderChange = { provider ->
                             settingsManager.setStreamingProvider(provider)
                         },
+                        completeAlbumsWithYouTube = completeAlbumsWithYouTube,
+                        onCompleteAlbumsWithYouTubeChange = { enabled ->
+                            settingsManager.setCompleteAlbumsWithYouTube(enabled)
+                        },
                         includeLocalMusic = includeLocalMusic,
                         localFolders = localMusicFolders.toList(),
                         isAppleMusicAuthenticated = isAuthenticated,
@@ -1286,6 +1303,9 @@ fun CalmMusic(app: CalmMusic) {
 
         if (showNowPlaying && playbackState.nowPlayingSong != null) {
             val song = playbackState.nowPlayingSong!!
+
+            val isInLibrary = librarySongIds.contains(song.id)
+
             val displayDuration = when {
                 playbackState.nowPlayingDurationMs > 0L -> playbackState.nowPlayingDurationMs
                 song.durationMillis != null && song.durationMillis > 0L -> song.durationMillis
@@ -1308,89 +1328,90 @@ fun CalmMusic(app: CalmMusic) {
                 showNowPlaying = false
             }
 
-                    NowPlayingScreen(
-                        title = song.title,
-                        artist = song.artist.ifBlank { if (song.sourceType == "LOCAL_FILE") "Local file" else "" },
-                        album = song.album,
-                        isPlaying = playbackState.isPlaybackPlaying,
-                        isLoading = playbackState.isBuffering,
-                        currentPosition = playbackState.nowPlayingPositionMs.coerceAtMost(displayDuration),
-                        duration = displayDuration,
-                        repeatMode = playbackState.repeatMode,
-                        isShuffleOn = playbackState.isShuffleOn,
-                        onPlayPauseClick = { togglePlayback() },
-                        onSeek = { positionMs ->
-                            when (song.sourceType) {
-                                "LOCAL_FILE", "YOUTUBE" -> {
-                                    localMediaController?.seekTo(positionMs)
-                                }
-                            }
-                        },
-                        onSeekBackwardClick = {
-                            viewModel.playPreviousInQueue(localMediaController)
-                        },
-                        onSeekForwardClick = {
-                            viewModel.playNextInQueue(localMediaController)
-                        },
-                        onShuffleClick = {
-                            viewModel.toggleShuffleMode(localMediaController)
-                        },
-                        onRepeatClick = {
-                            viewModel.cycleRepeatMode(localMediaController)
-                        },
-                        onAddToPlaylistClick = {
-                            if (playbackState.nowPlayingSong != null) {
-                                showAddToPlaylistDialog = true
-                            }
-                        },
-                        onBackClick = { showNowPlaying = false },
-                        isVideo = isLocalVideo,
-                        player = if (isLocalVideo) localMediaController else null,
-                        canDownload = (streamingProvider == StreamingProvider.YOUTUBE && song.sourceType == "YOUTUBE"),
-                        isDownloadInProgress = downloadStatuses.any { it.songId == song.id && (it.state == YouTubeDownloadStatus.State.PENDING || it.state == YouTubeDownloadStatus.State.IN_PROGRESS) },
-                        onDownloadClick = {
-                            val existingDownloadFolder = settingsManager.getDownloadFolderUri()
-                            if (existingDownloadFolder == null) {
-                                // Ask the user where to create the CalmMusic folder
-                                pendingDownloadSong = song
-                                downloadFolderPickerLauncher.launch(null)
-                            } else {
-                                app.youTubeDownloadManager.enqueueDownload(song)
-                                libraryScope.launch {
-                                    snackbarHostState.showSnackbar(
-                                        message = "Download started",
-                                        withDismissAction = false,
-                                        duration = SnackbarDurationMMD.Short,
-                                    )
-                                }
-                            }
-                        },
-                        onCancelDownloadClick = {
-                            val active = downloadStatuses.firstOrNull { it.songId == song.id && (it.state == YouTubeDownloadStatus.State.PENDING || it.state == YouTubeDownloadStatus.State.IN_PROGRESS) }
-                            if (active != null) {
-                                app.youTubeDownloadManager.cancelDownload(active.id)
-                            }
-                        },
-                        canAddToLibrary = (streamingProvider == StreamingProvider.YOUTUBE && song.sourceType == "YOUTUBE"),
-                        onAddToLibraryClick = {
-                            libraryScope.launch {
-                                try {
-                                    viewModel.addStreamingSongToLibrary(song)
-                                    snackbarHostState.showSnackbar(
-                                        message = "Added to library",
-                                        withDismissAction = false,
-                                        duration = SnackbarDurationMMD.Short,
-                                    )
-                                } catch (_: Exception) {
-                                    snackbarHostState.showSnackbar(
-                                        message = "Couldn't add to library",
-                                        withDismissAction = false,
-                                        duration = SnackbarDurationMMD.Short,
-                                    )
-                                }
-                            }
-                        },
-                    )
+            NowPlayingScreen(
+                title = song.title,
+                artist = song.artist.ifBlank { if (song.sourceType == "LOCAL_FILE") "Local file" else "" },
+                album = song.album,
+                isPlaying = playbackState.isPlaybackPlaying,
+                isLoading = playbackState.isBuffering,
+                currentPosition = playbackState.nowPlayingPositionMs.coerceAtMost(displayDuration),
+                duration = displayDuration,
+                repeatMode = playbackState.repeatMode,
+                isShuffleOn = playbackState.isShuffleOn,
+                onPlayPauseClick = { togglePlayback() },
+                onSeek = { positionMs ->
+                    when (song.sourceType) {
+                        "LOCAL_FILE", "YOUTUBE" -> {
+                            localMediaController?.seekTo(positionMs)
+                        }
+                    }
+                },
+                onSeekBackwardClick = {
+                    viewModel.playPreviousInQueue(localMediaController)
+                },
+                onSeekForwardClick = {
+                    viewModel.playNextInQueue(localMediaController)
+                },
+                onShuffleClick = {
+                    viewModel.toggleShuffleMode(localMediaController)
+                },
+                onRepeatClick = {
+                    viewModel.cycleRepeatMode(localMediaController)
+                },
+                onAddToPlaylistClick = {
+                    if (playbackState.nowPlayingSong != null) {
+                        showAddToPlaylistDialog = true
+                    }
+                },
+                onBackClick = { showNowPlaying = false },
+                isVideo = isLocalVideo,
+                player = if (isLocalVideo) localMediaController else null,
+                canDownload = (streamingProvider == StreamingProvider.YOUTUBE && song.sourceType == "YOUTUBE"),
+                isDownloadInProgress = downloadStatuses.any { it.songId == song.id && (it.state == YouTubeDownloadStatus.State.PENDING || it.state == YouTubeDownloadStatus.State.IN_PROGRESS) },
+                onDownloadClick = {
+                    val existingDownloadFolder = settingsManager.getDownloadFolderUri()
+                    if (existingDownloadFolder == null) {
+                        pendingDownloadSong = song
+                        downloadFolderPickerLauncher.launch(null)
+                    } else {
+                        app.youTubeDownloadManager.enqueueDownload(song)
+                        libraryScope.launch {
+                            snackbarHostState.showSnackbar(
+                                message = "Download started",
+                                withDismissAction = false,
+                                duration = SnackbarDurationMMD.Short,
+                            )
+                        }
+                    }
+                },
+                onCancelDownloadClick = {
+                    val active = downloadStatuses.firstOrNull { it.songId == song.id && (it.state == YouTubeDownloadStatus.State.PENDING || it.state == YouTubeDownloadStatus.State.IN_PROGRESS) }
+                    if (active != null) {
+                        app.youTubeDownloadManager.cancelDownload(active.id)
+                    }
+                },
+                canAddToLibrary = (streamingProvider == StreamingProvider.YOUTUBE && song.sourceType == "YOUTUBE" && !isInLibrary),
+                onAddToLibraryClick = {
+                    libraryScope.launch {
+                        try {
+                            viewModel.addStreamingSongToLibrary(song)
+                            snackbarHostState.showSnackbar(
+                                message = "Added to library",
+                                withDismissAction = false,
+                                duration = SnackbarDurationMMD.Short,
+                            )
+                        } catch (_: Exception) {
+                            snackbarHostState.showSnackbar(
+                                message = "Couldn't add to library",
+                                withDismissAction = false,
+                                duration = SnackbarDurationMMD.Short,
+                            )
+                        }
+                    }
+                },
+                isInLibrary = isInLibrary,
+                sourceType = song.sourceType,
+            )
         }
 
         if (showAddToPlaylistDialog && playbackState.nowPlayingSong != null) {

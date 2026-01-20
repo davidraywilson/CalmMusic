@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Headphones
+import androidx.compose.material.icons.outlined.LibraryAddCheck
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -39,6 +40,7 @@ fun SongItem(
     isCurrentlyPlaying: Boolean,
     onClick: () -> Unit,
     showDivider: Boolean = true,
+    isInLibrary: Boolean = false,
 ) {
     val (isLocal, subtitle) = remember(
         song.id,
@@ -141,6 +143,16 @@ fun SongItem(
                             contentDescription = "Streaming source",
                             modifier = Modifier
                                 .size(16.dp)
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
+                    if (!isLocal && isInLibrary) {
+                        Icon(
+                            imageVector = Icons.Outlined.LibraryAddCheck,
+                            contentDescription = "In Library",
+                            modifier = Modifier.size(16.dp)
                         )
 
                         Spacer(modifier = Modifier.width(8.dp))

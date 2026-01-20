@@ -21,6 +21,9 @@ class CalmMusicSettingsManager(context: Context) {
     private val _streamingProvider = MutableStateFlow(getStreamingProviderSync())
     val streamingProvider: StateFlow<StreamingProvider> = _streamingProvider.asStateFlow()
 
+    private val _completeAlbumsWithYouTube = MutableStateFlow(getCompleteAlbumsWithYouTubeSync())
+    val completeAlbumsWithYouTube: StateFlow<Boolean> = _completeAlbumsWithYouTube.asStateFlow()
+
     // Apple Music sync metadata (not exposed as flows for now; simple perf knob).
     fun getLastAppleMusicSyncMillis(): Long {
         return prefs.getLong(KEY_LAST_APPLE_MUSIC_SYNC_MILLIS, 0L)
@@ -79,6 +82,15 @@ class CalmMusicSettingsManager(context: Context) {
         _streamingProvider.value = provider
     }
 
+    fun getCompleteAlbumsWithYouTubeSync(): Boolean {
+        return prefs.getBoolean(KEY_COMPLETE_ALBUMS_WITH_YOUTUBE, false)
+    }
+
+    fun setCompleteAlbumsWithYouTube(enabled: Boolean) {
+        prefs.edit { putBoolean(KEY_COMPLETE_ALBUMS_WITH_YOUTUBE, enabled) }
+        _completeAlbumsWithYouTube.value = enabled
+    }
+
     // Dedicated CalmMusic download folder (SAF tree URI for the CalmMusic directory)
     fun getDownloadFolderUri(): String? {
         return prefs.getString(KEY_DOWNLOAD_FOLDER_URI, null)
@@ -108,5 +120,6 @@ class CalmMusicSettingsManager(context: Context) {
         private const val KEY_HAS_COMPLETED_PERMISSIONS_ONBOARDING = "has_completed_permissions_onboarding"
         private const val KEY_STREAMING_PROVIDER = "streaming_provider"
         private const val KEY_DOWNLOAD_FOLDER_URI = "download_folder_uri"
+        private const val KEY_COMPLETE_ALBUMS_WITH_YOUTUBE = "complete_albums_with_youtube"
     }
 }

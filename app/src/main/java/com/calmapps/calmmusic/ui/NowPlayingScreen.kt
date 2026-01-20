@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.LibraryAdd
+import androidx.compose.material.icons.outlined.LibraryAddCheck
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.PlaylistAdd
@@ -29,7 +31,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -74,6 +75,8 @@ fun NowPlayingScreen(
     onCancelDownloadClick: () -> Unit = {},
     canAddToLibrary: Boolean = false,
     onAddToLibraryClick: () -> Unit = {},
+    isInLibrary: Boolean = false,
+    sourceType: String? = null,
 ) {
     Column(
         modifier = Modifier
@@ -147,6 +150,34 @@ fun NowPlayingScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+
+                val isLocal = sourceType == "LOCAL_FILE"
+                if (!isLocal || isInLibrary) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (!isLocal) {
+                            Icon(
+                                imageVector = Icons.Outlined.Cloud,
+                                contentDescription = "Streaming source",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        if (!isLocal && isInLibrary) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+
+                        if (isInLibrary) {
+                            Icon(
+                                imageVector = Icons.Outlined.LibraryAddCheck,
+                                contentDescription = "In Library",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
 
@@ -386,5 +417,7 @@ private fun NowPlayingScreenPreview() {
         onCancelDownloadClick = {},
         canAddToLibrary = false,
         onAddToLibraryClick = {},
+        isInLibrary = true,
+        sourceType = "YOUTUBE"
     )
 }

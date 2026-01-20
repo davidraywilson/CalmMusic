@@ -42,6 +42,8 @@ fun SettingsScreen(
     onSelectedTabChange: (Int) -> Unit,
     streamingProvider: com.calmapps.calmmusic.data.StreamingProvider,
     onStreamingProviderChange: (com.calmapps.calmmusic.data.StreamingProvider) -> Unit,
+    completeAlbumsWithYouTube: Boolean,
+    onCompleteAlbumsWithYouTubeChange: (Boolean) -> Unit,
     includeLocalMusic: Boolean,
     localFolders: List<String>,
     isAppleMusicAuthenticated: Boolean,
@@ -193,6 +195,51 @@ fun SettingsScreen(
                                         onStreamingProviderChange(com.calmapps.calmmusic.data.StreamingProvider.YOUTUBE)
                                     }
                                 },
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        HorizontalDividerMMD()
+                    }
+                }
+
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+                    ) {
+                        TextMMD(
+                            text = "Library features",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onCompleteAlbumsWithYouTubeChange(!completeAlbumsWithYouTube) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                TextMMD(
+                                    text = "Complete albums with YouTube",
+                                    fontSize = 16.sp,
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                TextMMD(
+                                    text = "When viewing a local album, search YouTube for missing songs and display them in the list.",
+                                    fontSize = 13.sp,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            SwitchMMD(
+                                checked = completeAlbumsWithYouTube,
+                                onCheckedChange = onCompleteAlbumsWithYouTubeChange,
                             )
                         }
 
@@ -493,122 +540,121 @@ fun SettingsScreen(
         }
 
         if (selectedTab == 3) {
-        // Downloads tab
-        LazyColumnMMD(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Top,
-        ) {
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
-                ) {
-                    TextMMD(
-                        text = "Download folder",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    TextMMD(
-                        text = currentDownloadFolder ?: "No download folder selected",
-                        fontSize = 14.sp,
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    ButtonMMD(onClick = onChangeDownloadFolderClick) {
-                        TextMMD(
-                            text = if (currentDownloadFolder == null) "Choose folder" else "Change folder",
-                            fontSize = 16.sp,
-                        )
-                    }
-                }
-            }
-
-            val hasDownloads = downloads.isNotEmpty()
-            if (hasDownloads) {
+            LazyColumnMMD(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Top,
+            ) {
                 item {
-                    HorizontalDividerMMD()
-                }
-
-                items(downloads) { download ->
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+                            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
                     ) {
                         TextMMD(
-                            text = download.title,
+                            text = "Download folder",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
-                        if (download.artist.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(2.dp))
-                            TextMMD(
-                                text = download.artist,
-                                fontSize = 14.sp,
-                            )
-                        }
 
                         Spacer(modifier = Modifier.height(4.dp))
 
-                        val progressPercent = (download.progress * 100f).toInt().coerceIn(0, 100)
-                        SliderMMD(
-                            modifier = Modifier.fillMaxWidth(),
-                            value = download.progress.coerceIn(0f, 1f),
-                            onValueChange = { },
+                        TextMMD(
+                            text = currentDownloadFolder ?: "No download folder selected",
+                            fontSize = 14.sp,
                         )
 
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
+                        ButtonMMD(onClick = onChangeDownloadFolderClick) {
+                            TextMMD(
+                                text = if (currentDownloadFolder == null) "Choose folder" else "Change folder",
+                                fontSize = 16.sp,
+                            )
+                        }
+                    }
+                }
+
+                val hasDownloads = downloads.isNotEmpty()
+                if (hasDownloads) {
+                    item {
+                        HorizontalDividerMMD()
+                    }
+
+                    items(downloads) { download ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
                         ) {
                             TextMMD(
-                                text = when (download.state) {
-                                    YouTubeDownloadStatus.State.PENDING -> "Pending ($progressPercent%)"
-                                    YouTubeDownloadStatus.State.IN_PROGRESS -> "In progress ($progressPercent%)"
-                                    YouTubeDownloadStatus.State.COMPLETED -> "Completed"
-                                    YouTubeDownloadStatus.State.FAILED -> download.errorMessage ?: "Failed"
-                                    YouTubeDownloadStatus.State.CANCELED -> "Canceled"
-                                },
-                                fontSize = 13.sp,
+                                text = download.title,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            if (download.artist.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                TextMMD(
+                                    text = download.artist,
+                                    fontSize = 14.sp,
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            val progressPercent = (download.progress * 100f).toInt().coerceIn(0, 100)
+                            SliderMMD(
+                                modifier = Modifier.fillMaxWidth(),
+                                value = download.progress.coerceIn(0f, 1f),
+                                onValueChange = { },
                             )
 
-                            if (download.state == YouTubeDownloadStatus.State.PENDING || download.state == YouTubeDownloadStatus.State.IN_PROGRESS) {
-                                OutlinedButtonMMD(onClick = { onCancelDownloadClick(download.id) }) {
-                                    TextMMD(
-                                        text = "Cancel",
-                                        fontSize = 14.sp,
-                                    )
+                            Spacer(modifier = Modifier.height(2.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                TextMMD(
+                                    text = when (download.state) {
+                                        YouTubeDownloadStatus.State.PENDING -> "Pending ($progressPercent%)"
+                                        YouTubeDownloadStatus.State.IN_PROGRESS -> "In progress ($progressPercent%)"
+                                        YouTubeDownloadStatus.State.COMPLETED -> "Completed"
+                                        YouTubeDownloadStatus.State.FAILED -> download.errorMessage ?: "Failed"
+                                        YouTubeDownloadStatus.State.CANCELED -> "Canceled"
+                                    },
+                                    fontSize = 13.sp,
+                                )
+
+                                if (download.state == YouTubeDownloadStatus.State.PENDING || download.state == YouTubeDownloadStatus.State.IN_PROGRESS) {
+                                    OutlinedButtonMMD(onClick = { onCancelDownloadClick(download.id) }) {
+                                        TextMMD(
+                                            text = "Cancel",
+                                            fontSize = 14.sp,
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                item {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    item {
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                    OutlinedButtonMMD(
-                        onClick = onClearFinishedDownloadsClick,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                    ) {
-                        TextMMD(
-                            text = "Clear finished downloads",
-                            fontSize = 16.sp,
-                        )
+                        OutlinedButtonMMD(
+                            onClick = onClearFinishedDownloadsClick,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                        ) {
+                            TextMMD(
+                                text = "Clear finished downloads",
+                                fontSize = 16.sp,
+                            )
+                        }
                     }
                 }
             }
         }
     }
-}
 }

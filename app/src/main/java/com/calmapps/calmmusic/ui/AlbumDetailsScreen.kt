@@ -36,6 +36,7 @@ fun AlbumDetailsScreen(
     viewModel: CalmMusicViewModel,
     onPlaySongClick: (SongUiModel, List<SongUiModel>) -> Unit,
     onShuffleClick: (List<SongUiModel>) -> Unit,
+    librarySongIds: Set<String> = emptySet(),
 ) {
     var songs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -135,6 +136,7 @@ fun AlbumDetailsScreen(
                                 },
                                 showDivider = song != displaySongs.lastOrNull(),
                                 showTrackNumber = true,
+                                isInLibrary = librarySongIds.contains(song.id),
                             )
                         }
                     }

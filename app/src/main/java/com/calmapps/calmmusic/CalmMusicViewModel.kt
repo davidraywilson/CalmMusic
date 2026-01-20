@@ -14,6 +14,7 @@ import com.apple.android.music.playback.model.PlaybackRepeatMode
 import com.calmapps.calmmusic.data.AlbumEntity
 import com.calmapps.calmmusic.data.ArtistEntity
 import com.calmapps.calmmusic.data.CalmMusicDatabase
+import com.calmapps.calmmusic.data.CalmMusicSettingsManager
 import com.calmapps.calmmusic.data.LibraryRepository
 import com.calmapps.calmmusic.data.NowPlayingSnapshot
 import com.calmapps.calmmusic.data.NowPlayingStorage
@@ -30,7 +31,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -74,7 +74,7 @@ class CalmMusicViewModel(
 
     private val _isLoadingAlbums = MutableStateFlow(true)
     val isLoadingAlbums: StateFlow<Boolean> = _isLoadingAlbums
- 
+
     private val _playbackState = MutableStateFlow(PlaybackState())
     val playbackState: StateFlow<PlaybackState> = _playbackState
 
@@ -100,16 +100,21 @@ class CalmMusicViewModel(
 
     /**
      * Fetch songs to display in the Album Details screen.
-     *
-     * For library albums (local / Apple Music), this reads from the Room
-     * database. For YouTube albums returned from search, this performs a
-     * YouTube Music song search scoped to the album and maps results into
-     * SongUiModel instances.
      */
     suspend fun getAlbumSongsForDetails(album: AlbumUiModel): List<SongUiModel> {
-        val librarySongs = getAlbumSongs(album.id)
-        if (librarySongs.isNotEmpty()) {
-            return librarySongs
+        val localSongs = getAlbumSongs(album.id)
+
+        val settings = CalmMusicSettingsManager(app)
+        val shouldComplete = settings.getCompleteAlbumsWithYouTubeSync()
+
+        if (localSongs.isNotEmpty()) {
+            if (shouldComplete) {
+                val youtubeSongs = getYouTubeAlbumSongs(album)
+                if (youtubeSongs.isNotEmpty()) {
+                    return mergeLocalAndYouTubeAlbums(localSongs, youtubeSongs)
+                }
+            }
+            return localSongs
         }
 
         return if (album.sourceType == "YOUTUBE") {
@@ -117,6 +122,47 @@ class CalmMusicViewModel(
         } else {
             emptyList()
         }
+    }
+
+    private fun mergeLocalAndYouTubeAlbums(
+        localSongs: List<SongUiModel>,
+        youtubeSongs: List<SongUiModel>
+    ): List<SongUiModel> {
+        val mergedList = mutableListOf<SongUiModel>()
+        val availableLocal = localSongs.toMutableList()
+
+        for (ytSong in youtubeSongs) {
+            val matchIndex = availableLocal.indexOfFirst { local ->
+                areSongsMatching(local, ytSong)
+            }
+
+            if (matchIndex != -1) {
+                mergedList.add(availableLocal.removeAt(matchIndex))
+            } else {
+                mergedList.add(ytSong)
+            }
+        }
+
+        if (availableLocal.isNotEmpty()) {
+            mergedList.addAll(availableLocal.sortedBy { it.trackNumber })
+        }
+
+        return mergedList
+    }
+
+    private fun areSongsMatching(local: SongUiModel, remote: SongUiModel): Boolean {
+        fun normalize(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
+
+        val lTitle = normalize(local.title)
+        val rTitle = normalize(remote.title)
+
+        if (lTitle == rTitle) return true
+
+        if (lTitle.length > 3 && rTitle.length > 3) {
+            if (lTitle.contains(rTitle) || rTitle.contains(lTitle)) return true
+        }
+
+        return false
     }
 
     private suspend fun getYouTubeAlbumSongs(album: AlbumUiModel): List<SongUiModel> {
@@ -142,8 +188,8 @@ class CalmMusicViewModel(
                 if (resultAlbum.isEmpty()) return@filter false
 
                 resultAlbum.equals(targetAlbumName, ignoreCase = true) ||
-                    resultAlbum.contains(targetAlbumName, ignoreCase = true) ||
-                    targetAlbumName.contains(resultAlbum, ignoreCase = true)
+                        resultAlbum.contains(targetAlbumName, ignoreCase = true) ||
+                        targetAlbumName.contains(resultAlbum, ignoreCase = true)
             }
 
             val songsForAlbum = if (filtered.isNotEmpty()) filtered else results
@@ -459,10 +505,10 @@ class CalmMusicViewModel(
 
         val canUseLocalSeek =
             controller != null &&
-                currentSong?.sourceType == "LOCAL_FILE" &&
-                nextSong.sourceType == "LOCAL_FILE" &&
-                localMap != null &&
-                localMap.size == queue.size
+                    currentSong?.sourceType == "LOCAL_FILE" &&
+                    nextSong.sourceType == "LOCAL_FILE" &&
+                    localMap != null &&
+                    localMap.size == queue.size
 
         if (canUseLocalSeek) {
             val targetLocalIndex = localMap!![targetIndex]
@@ -517,10 +563,10 @@ class CalmMusicViewModel(
 
         val canUseLocalSeek =
             controller != null &&
-                currentSong?.sourceType == "LOCAL_FILE" &&
-                prevSong.sourceType == "LOCAL_FILE" &&
-                localMap != null &&
-                localMap.size == queue.size
+                    currentSong?.sourceType == "LOCAL_FILE" &&
+                    prevSong.sourceType == "LOCAL_FILE" &&
+                    localMap != null &&
+                    localMap.size == queue.size
 
         if (canUseLocalSeek) {
             val targetLocalIndex = localMap!![targetIndex]
@@ -708,7 +754,7 @@ class CalmMusicViewModel(
             val fastIntervalMs = 750L
             val slowIntervalMs = 2000L
 
-            while (isActive) {
+            while (true) {
                 val state = _playbackState.value
                 val currentSong = state.nowPlayingSong
                 val isLocalFile = currentSong?.sourceType == "LOCAL_FILE"
@@ -724,7 +770,8 @@ class CalmMusicViewModel(
                 val position = controller.currentPosition
                 val duration = controller.duration
                 val playbackState = controller.playbackState
-                val isBufferingNow = !isLocalFile && playbackState == Player.STATE_BUFFERING
+                val isBufferingNow =
+                    !isLocalFile && playbackState == Player.STATE_BUFFERING
 
                 var newState = state.copy(
                     isPlaybackPlaying = isPlaying,
@@ -778,10 +825,12 @@ class CalmMusicViewModel(
                                         localController = controller,
                                     )
                                 }
+
                                 hasNext -> {
                                     didAutoAdvanceYouTube = true
                                     playNextInQueue(controller)
                                 }
+
                                 !hasNext && hasMultiple && state.repeatMode == RepeatMode.QUEUE -> {
                                     didAutoAdvanceYouTube = true
                                     startPlaybackFromQueue(
@@ -791,12 +840,17 @@ class CalmMusicViewModel(
                                         localController = controller,
                                     )
                                 }
+
+                                else -> {
+                                    // End of queue with repeat off: leave playback stopped.
+                                }
                             }
                         }
                     } else if (playbackState == Player.STATE_READY && isPlaying) {
                         lastCompletedYouTubeSongId = null
                     }
 
+                    // Maintain a small prefetch window
                     val currentIndex = state.playbackQueueIndex
                     val queue = state.playbackQueue
                     if (currentIndex != null && currentIndex in queue.indices && currentIndex != lastYouTubeQueueIndex) {
@@ -826,6 +880,7 @@ class CalmMusicViewModel(
                     (isLocalFile || isYouTube) && isPlaying -> fastIntervalMs
                     else -> slowIntervalMs
                 }
+
                 delay(nextDelayMs)
             }
         }
@@ -847,16 +902,45 @@ class CalmMusicViewModel(
     }
 
     /**
-     * Add a streaming song (currently YouTube) into the persistent library so it
-     * appears alongside local and Apple Music songs.
+     * Add a streaming song (currently YouTube) into the persistent library.
+     * * If the song is missing a track number (common with Search results), this
+     * function attempts to fetch the album details to find the correct track number
+     * before saving.
      */
     suspend fun addStreamingSongToLibrary(song: SongUiModel) {
         if (song.sourceType != "YOUTUBE") return
 
         try {
+            var songToSave = song
+            if (songToSave.trackNumber == null && !songToSave.album.isNullOrBlank()) {
+                val artistName = songToSave.artist
+                val albumTitle = songToSave.album!!
+
+                val tempAlbum = AlbumUiModel(
+                    id = "", // ID doesn't matter for the search helper
+                    title = albumTitle,
+                    artist = artistName,
+                    sourceType = "YOUTUBE",
+                    releaseYear = null
+                )
+
+                val albumSongs = getYouTubeAlbumSongs(tempAlbum)
+
+                val match = albumSongs.firstOrNull {
+                    areSongsMatching(it, songToSave)
+                }
+
+                if (match != null && match.trackNumber != null) {
+                    songToSave = songToSave.copy(
+                        trackNumber = match.trackNumber,
+                        discNumber = match.discNumber ?: 1
+                    )
+                }
+            }
+
             withContext(Dispatchers.IO) {
-                val artistName = song.artist.takeIf { it.isNotBlank() } ?: "Unknown artist"
-                val albumName = song.album?.takeIf { it.isNotBlank() }
+                val artistName = songToSave.artist.takeIf { it.isNotBlank() } ?: "Unknown artist"
+                val albumName = songToSave.album?.takeIf { it.isNotBlank() }
 
                 fun String.toIdComponent(): String =
                     trim()
@@ -878,16 +962,16 @@ class CalmMusicViewModel(
                 } else null
 
                 val songEntity = SongEntity(
-                    id = song.id,
-                    title = song.title,
+                    id = songToSave.id,
+                    title = songToSave.title,
                     artist = artistName,
                     album = albumName,
                     albumId = albumId,
-                    discNumber = song.discNumber,
-                    trackNumber = song.trackNumber,
-                    durationMillis = song.durationMillis,
+                    discNumber = songToSave.discNumber,
+                    trackNumber = songToSave.trackNumber,
+                    durationMillis = songToSave.durationMillis,
                     sourceType = "YOUTUBE",
-                    audioUri = song.id,
+                    audioUri = songToSave.id,
                     artistId = artistId,
                     releaseYear = null,
                     localLastModifiedMillis = null,
@@ -1137,7 +1221,7 @@ class CalmMusicViewModel(
             }
     }
 }
- 
+
 /**
  * Snapshot of app-wide playback state, exposed from CalmMusicViewModel so that
  * UI and other layers can observe now-playing information without needing to
