@@ -1129,53 +1129,9 @@ fun CalmMusic(app: CalmMusic) {
                             }
                         },
                         onAlbumClick = { album: AlbumUiModel ->
-                            when (streamingProvider) {
-                                StreamingProvider.APPLE_MUSIC -> {
-                                    selectedAlbum = album
-                                    navController.navigate(Screen.AlbumDetails.route) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                                StreamingProvider.YOUTUBE -> {
-                                    searchScope.launch {
-                                        try {
-                                            val tracks = app.youTubeInnertubeClient.searchSongs(
-                                                query = album.title,
-                                                limit = 50,
-                                            )
-
-                                            val queue = tracks.map { track ->
-                                                SongUiModel(
-                                                    id = track.videoId,
-                                                    title = track.title,
-                                                    artist = track.artist,
-                                                    durationText = formatDurationMillis(track.durationMillis),
-                                                    durationMillis = track.durationMillis,
-                                                    trackNumber = null,
-                                                    sourceType = "YOUTUBE",
-                                                    audioUri = track.videoId,
-                                                    album = album.title,
-                                                )
-                                            }
-
-                                            if (queue.isNotEmpty()) {
-                                                startPlaybackFromQueue(queue, 0)
-                                            } else {
-                                                snackbarHostState.showSnackbar(
-                                                    message = "No tracks found for this album",
-                                                    withDismissAction = false,
-                                                    duration = SnackbarDurationMMD.Short,
-                                                )
-                                            }
-                                        } catch (_: Exception) {
-                                            snackbarHostState.showSnackbar(
-                                                message = "Couldn't load album tracks",
-                                                withDismissAction = false,
-                                                duration = SnackbarDurationMMD.Short,
-                                            )
-                                        }
-                                    }
-                                }
+                            selectedAlbum = album
+                            navController.navigate(Screen.AlbumDetails.route) {
+                                launchSingleTop = true
                             }
                         },
                     )

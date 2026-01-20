@@ -44,7 +44,7 @@ fun AlbumDetailsScreen(
     val playbackState by viewModel.playbackState.collectAsState()
     val currentSongId = playbackState.currentSongId
 
-    LaunchedEffect(album?.id) {
+    LaunchedEffect(album?.id, album?.sourceType) {
         if (album == null) {
             isLoading = false
             return@LaunchedEffect
@@ -52,7 +52,7 @@ fun AlbumDetailsScreen(
         isLoading = true
         errorMessage = null
         try {
-            songs = viewModel.getAlbumSongs(album.id)
+            songs = viewModel.getAlbumSongsForDetails(album)
         } catch (e: Exception) {
             errorMessage = e.message ?: "Failed to load album songs"
         } finally {

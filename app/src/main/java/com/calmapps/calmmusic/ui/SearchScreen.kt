@@ -87,14 +87,6 @@ fun SearchScreen(
                     when (selectedTab) {
                         0 -> {
                             if (songs.isNotEmpty()) {
-                                item {
-                                    TextMMD(
-                                        text = "Songs (${songs.size})",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                }
                                 items(songs.size) { index ->
                                     val song = songs[index]
                                     SongItem(
@@ -119,14 +111,6 @@ fun SearchScreen(
 
                         1 -> {
                             if (albums.isNotEmpty()) {
-                                item {
-                                    TextMMD(
-                                        text = "Albums (${albums.size})",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                }
                                 items(albums.size) { index ->
                                     val album = albums[index]
                                     AlbumItem(

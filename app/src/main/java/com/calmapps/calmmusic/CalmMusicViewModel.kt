@@ -97,6 +97,70 @@ class CalmMusicViewModel(
         }
     }
 
+    /**
+     * Fetch songs to display in the Album Details screen.
+     *
+     * For library albums (local / Apple Music), this reads from the Room
+     * database. For YouTube albums returned from search, this performs a
+     * YouTube Music song search scoped to the album and maps results into
+     * SongUiModel instances.
+     */
+    suspend fun getAlbumSongsForDetails(album: AlbumUiModel): List<SongUiModel> {
+        return if (album.sourceType == "YOUTUBE") {
+            getYouTubeAlbumSongs(album)
+        } else {
+            getAlbumSongs(album.id)
+        }
+    }
+
+    private suspend fun getYouTubeAlbumSongs(album: AlbumUiModel): List<SongUiModel> {
+        return withContext(Dispatchers.IO) {
+            val termBuilder = StringBuilder().apply {
+                append(album.title)
+                val artist = album.artist
+                if (!artist.isNullOrBlank()) {
+                    append(' ')
+                    append(artist)
+                }
+            }
+
+            val results = app.youTubeInnertubeClient.searchSongs(
+                query = termBuilder.toString(),
+                limit = 50,
+            )
+
+            val targetAlbumName = album.title.trim()
+
+            // Prefer tracks whose parsed album metadata matches the selected
+            // album title; fall back to all results if nothing matches.
+            val filtered = results.filter { result ->
+                val resultAlbum = result.album?.trim().orEmpty()
+                if (resultAlbum.isEmpty()) return@filter false
+
+                resultAlbum.equals(targetAlbumName, ignoreCase = true) ||
+                    resultAlbum.contains(targetAlbumName, ignoreCase = true) ||
+                    targetAlbumName.contains(resultAlbum, ignoreCase = true)
+            }
+
+            val songsForAlbum = if (filtered.isNotEmpty()) filtered else results
+
+            songsForAlbum.mapIndexed { index, item ->
+                SongUiModel(
+                    id = item.videoId,
+                    title = item.title,
+                    artist = item.artist,
+                    durationText = formatDurationMillis(item.durationMillis),
+                    durationMillis = item.durationMillis,
+                    trackNumber = index + 1,
+                    discNumber = 1,
+                    sourceType = "YOUTUBE",
+                    audioUri = item.videoId,
+                    album = album.title,
+                )
+            }
+        }
+    }
+
     data class ArtistContent(
         val songs: List<SongUiModel>,
         val albums: List<AlbumUiModel>

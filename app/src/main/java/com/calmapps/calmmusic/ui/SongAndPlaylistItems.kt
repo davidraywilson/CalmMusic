@@ -60,6 +60,7 @@ fun SongItem(
         } else {
             ""
         }
+
         val mp4 = local && fileExtension == "mp4"
         val baseArtist = song.artist.ifBlank { if (local) "Local file" else "" }
         val album = song.album?.takeIf { it.isNotBlank() }
@@ -67,12 +68,12 @@ fun SongItem(
         val prefix = if (mp4) "MP4 • " else ""
 
         val coreSubtitle = buildString {
-            if (!album.isNullOrBlank()) {
-                append(album)
-            }
             if (baseArtist.isNotBlank()) {
-                if (isNotEmpty()) append(" • ")
                 append(baseArtist)
+            }
+            if (!album.isNullOrBlank()) {
+                if (isNotEmpty()) append(" • ")
+                append(album)
             }
             if (!durationText.isNullOrBlank()) {
                 if (isNotEmpty()) append(" • ")
