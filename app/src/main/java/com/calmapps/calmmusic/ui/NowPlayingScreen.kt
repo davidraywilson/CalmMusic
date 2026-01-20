@@ -151,34 +151,6 @@ fun NowPlayingScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-
-                val isLocal = sourceType == "LOCAL_FILE"
-                if (!isLocal || isInLibrary) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (!isLocal) {
-                            Icon(
-                                imageVector = Icons.Outlined.Cloud,
-                                contentDescription = "Streaming source",
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        if (!isLocal && isInLibrary) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                        }
-
-                        if (isInLibrary) {
-                            Icon(
-                                imageVector = Icons.Outlined.LibraryAddCheck,
-                                contentDescription = "In Library",
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
             }
 
             if (isVideo && player != null) {
@@ -301,7 +273,8 @@ fun NowPlayingScreen(
 
         // Bottom row for secondary actions (e.g. shuffle, repeat, add to playlist / library)
         Row(
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             if (canAddToLibrary) {
                 IconButton(onClick = onAddToLibraryClick) {
@@ -378,6 +351,43 @@ fun NowPlayingScreen(
                                     shape = CircleShape,
                                 ),
                         )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            Box(
+                modifier = Modifier
+                    .background(
+                        color = MaterialTheme.colorScheme.onSurface,
+                        shape = CircleShape
+                    )
+                    .padding(12.dp, 4.dp)
+            ) {
+                val isLocal = sourceType == "LOCAL_FILE"
+                if (!isLocal || isInLibrary) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (!isLocal) {
+                            Icon(
+                                imageVector = Icons.Outlined.Cloud,
+                                contentDescription = "Streaming source",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.surface
+                            )
+                        }
+
+                        if (!isLocal && isInLibrary) {
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Icon(
+                                imageVector = Icons.Outlined.LibraryAddCheck,
+                                contentDescription = "In Library",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.surface
+                            )
+                        }
                     }
                 }
             }
