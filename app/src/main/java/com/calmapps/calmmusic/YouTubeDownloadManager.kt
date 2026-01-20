@@ -77,8 +77,6 @@ class YouTubeDownloadManager(
                 return@launch
             }
 
-            // Use the persisted folder as the downloads directory. The folder
-            // is expected to already point at the CalmMusic subdirectory.
             val downloadsDir = baseDir
 
             updateDownload(id) { it.copy(state = YouTubeDownloadStatus.State.IN_PROGRESS) }
@@ -143,10 +141,7 @@ internal suspend fun performYouTubeDownloadInternal(
     return try {
         val videoId = song.id
 
-        // 1) Download the audio stream into the CalmMusic folder.
         val targetFile = withContext(Dispatchers.IO) {
-            // Resolve a download-optimized audio stream URL via NewPipe, using a
-            // capped bitrate to keep file sizes (and download time) reasonable.
             val streamUrl = app.youTubeStreamResolver.getDownloadAudioUrl(videoId)
 
             val safeTitle = (song.title.ifBlank { videoId })
@@ -160,33 +155,118 @@ internal suspend fun performYouTubeDownloadInternal(
                 throw IllegalStateException("Could not create target file")
             }
 
-            val request = Request.Builder()
+            val probeRequest = Request.Builder()
                 .url(streamUrl)
+                .head()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            val (contentLength, supportsRanges) = client.newCall(probeRequest).execute().use { response ->
                 if (!response.isSuccessful) {
-                    throw IllegalStateException("Download failed: ${'$'}{response.code}")
+                    throw IllegalStateException("Probe failed: ${'$'}{response.code}")
                 }
-                val body = response.body ?: throw IllegalStateException("Empty body")
-                val total = body.contentLength().takeIf { it > 0 } ?: -1L
-                context.contentResolver.openOutputStream(target.uri)?.use { out ->
-                    body.byteStream().use { input ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var read: Int
-                        var readSoFar = 0L
-                        while (input.read(buffer).also { read = it } != -1) {
-                            out.write(buffer, 0, read)
-                            if (total > 0) {
-                                readSoFar += read
-                                onProgress(readSoFar.toFloat() / total.toFloat())
+                val length = response.header("Content-Length")?.toLongOrNull() ?: -1L
+                val acceptRanges = response.header("Accept-Ranges")?.contains("bytes", ignoreCase = true) == true
+                length to acceptRanges
+            }
+
+            val finalTarget = target
+
+            if (contentLength > 0L && supportsRanges) {
+                val tmpFile = kotlin.io.path.createTempFile(
+                    prefix = "yt-$videoId-",
+                    suffix = ".part",
+                    directory = context.cacheDir.toPath(),
+                ).toFile()
+
+                try {
+                    val chunkCount = 4.coerceAtMost(((contentLength / (5L * 1024 * 1024)).toInt() + 1).coerceAtLeast(2))
+                    val chunkSize = contentLength / chunkCount
+                    val downloaded = java.util.concurrent.atomic.AtomicLong(0L)
+
+                    kotlinx.coroutines.coroutineScope {
+                        repeat(chunkCount) { index ->
+                            val start = index * chunkSize
+                            val endExclusive = if (index == chunkCount - 1) contentLength else (start + chunkSize)
+                            val end = endExclusive - 1
+
+                            launch(Dispatchers.IO) {
+                                val rangeRequest = Request.Builder()
+                                    .url(streamUrl)
+                                    .addHeader("Range", "bytes=$start-$end")
+                                    .build()
+
+                                client.newCall(rangeRequest).execute().use { response ->
+                                    if (!response.isSuccessful) {
+                                        throw IllegalStateException("Chunk download failed: ${'$'}{response.code}")
+                                    }
+                                    val body = response.body ?: throw IllegalStateException("Empty body for chunk")
+
+                                    java.io.RandomAccessFile(tmpFile, "rw").use { raf ->
+                                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                        var read: Int
+                                        var offset = start
+                                        while (body.byteStream().read(buffer).also { read = it } != -1) {
+                                            if (read <= 0) continue
+                                            raf.seek(offset)
+                                            raf.write(buffer, 0, read)
+                                            offset += read
+
+                                            val totalSoFar = downloaded.addAndGet(read.toLong())
+                                            onProgress((totalSoFar.toDouble() / contentLength.toDouble()).toFloat())
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                } ?: throw IllegalStateException("Cannot open output stream")
-            }
 
-            target
+                    context.contentResolver.openOutputStream(finalTarget.uri)?.use { out ->
+                        java.io.FileInputStream(tmpFile).use { input ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            var read: Int
+                            while (input.read(buffer).also { read = it } != -1) {
+                                out.write(buffer, 0, read)
+                            }
+                        }
+                    } ?: throw IllegalStateException("Cannot open output stream for target file")
+
+                    onProgress(1f)
+                } finally {
+                    if (tmpFile.exists()) {
+                        tmpFile.delete()
+                    }
+                }
+
+                finalTarget
+            } else {
+                val request = Request.Builder()
+                    .url(streamUrl)
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IllegalStateException("Download failed: ${'$'}{response.code}")
+                    }
+                    val body = response.body ?: throw IllegalStateException("Empty body")
+                    val total = body.contentLength().takeIf { it > 0 } ?: -1L
+                    context.contentResolver.openOutputStream(finalTarget.uri)?.use { out ->
+                        body.byteStream().use { input ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            var read: Int
+                            var readSoFar = 0L
+                            while (input.read(buffer).also { read = it } != -1) {
+                                out.write(buffer, 0, read)
+                                if (total > 0) {
+                                    readSoFar += read
+                                    onProgress(readSoFar.toFloat() / total.toFloat())
+                                }
+                            }
+                        }
+                    } ?: throw IllegalStateException("Cannot open output stream")
+                }
+
+                finalTarget
+            }
         }
 
         withContext(Dispatchers.IO) {
@@ -263,9 +343,6 @@ internal suspend fun performYouTubeDownloadInternal(
 
         // After database updates, refresh library for the in-memory view.
         withContext(Dispatchers.Main) {
-            // We go through the CalmMusicViewModel via a stored reference on the app
-            // is avoided here to keep the manager independent. The caller is
-            // responsible for refreshing the in-memory library if desired.
         }
 
         true

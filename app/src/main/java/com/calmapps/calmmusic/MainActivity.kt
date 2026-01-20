@@ -55,8 +55,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.documentfile.provider.DocumentFile
@@ -69,17 +67,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.apple.android.music.playback.model.PlaybackRepeatMode
-import com.calmapps.calmmusic.data.AlbumEntity
-import com.calmapps.calmmusic.data.ArtistEntity
-import com.calmapps.calmmusic.data.CalmMusicDatabase
-import com.calmapps.calmmusic.data.LocalMusicScanner
-import com.calmapps.calmmusic.data.PlaylistEntity
-import com.calmapps.calmmusic.data.PlaylistTrackEntity
-import com.calmapps.calmmusic.data.SongEntity
 import com.calmapps.calmmusic.data.StreamingProvider
 import com.calmapps.calmmusic.overlay.SystemOverlayService
-import com.calmapps.calmmusic.playback.PlaybackCoordinator
 import com.calmapps.calmmusic.ui.AlbumDetailsScreen
 import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.AlbumsScreen
@@ -93,7 +82,6 @@ import com.calmapps.calmmusic.ui.PlaylistEditScreen
 import com.calmapps.calmmusic.ui.PlaylistItem
 import com.calmapps.calmmusic.ui.PlaylistUiModel
 import com.calmapps.calmmusic.ui.PlaylistsScreen
-import com.calmapps.calmmusic.ui.RepeatMode
 import com.calmapps.calmmusic.ui.SearchScreen
 import com.calmapps.calmmusic.ui.SettingsScreen
 import com.calmapps.calmmusic.ui.SongUiModel
@@ -110,11 +98,8 @@ import com.mudita.mmd.components.snackbar.SnackbarDurationMMD
 import com.mudita.mmd.components.snackbar.SnackbarHostMMD
 import com.mudita.mmd.components.snackbar.SnackbarHostStateMMD
 import com.mudita.mmd.components.text.TextMMD
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.util.UUID
 
 class MainActivity : ComponentActivity() {
 
@@ -468,6 +453,11 @@ fun CalmMusic(app: CalmMusic) {
                                 releaseYear = album.year,
                             )
                         }
+
+                        // Pre-cache the first few YouTube results so playback can
+                        // start without blocking on NewPipe resolution.
+                        val topVideoIds = songResults.take(5).map { it.videoId }
+                        app.youTubePrecacheManager.precacheSearchResults(topVideoIds)
                     }
                 }
             } catch (e: Exception) {
@@ -609,6 +599,10 @@ fun CalmMusic(app: CalmMusic) {
     LaunchedEffect(currentDestination) {
         if (currentDestination?.route == Screen.Search.route) {
             focusRequester.requestFocus()
+        } else {
+            // When leaving the search screen, drop the dedicated search window
+            // and rely on the queue-based window instead.
+            app.youTubePrecacheManager.clearSearchWindow()
         }
         if (currentDestination?.route != Screen.Playlists.route && isPlaylistsEditMode) {
             isPlaylistsEditMode = false

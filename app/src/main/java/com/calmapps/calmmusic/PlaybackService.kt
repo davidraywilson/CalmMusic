@@ -133,7 +133,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun createDataSourceFactory(): DataSource.Factory {
-        val baseFactory = DefaultDataSource.Factory(this)
+        val app = application as CalmMusic
+        val baseFactory = app.cacheDataSourceFactory
 
         return ResolvingDataSource.Factory(baseFactory) { dataSpec ->
             val uri = dataSpec.uri
@@ -148,25 +149,17 @@ class PlaybackService : MediaSessionService() {
                 ?: return@Factory dataSpec
 
             val now = System.currentTimeMillis()
-            synchronized(youTubeUrlCache) {
-                val cached = youTubeUrlCache[videoId]
-                if (cached != null && cached.expiresAtMillis > now) {
-                    return@Factory dataSpec.withUri(cached.url.toUri())
-                }
+            val precache = app.youTubePrecacheManager
+
+            val cachedUrl = precache.getCachedUrl(videoId, now)
+            if (cachedUrl != null) {
+                return@Factory dataSpec.withUri(cachedUrl.toUri())
             }
 
-            val app = application as CalmMusic
-
-            // Always resolve YouTube playback URLs via NewPipe (YouTubeStreamResolver).
-            // Innertube/Piped is still used for search/metadata elsewhere.
             val resolvedUrl = runBlocking(Dispatchers.IO) {
                 app.youTubeStreamResolver.getBestAudioUrl(videoId)
             }
-
-            val expiresAt = now + YOUTUBE_URL_TTL_MS
-            synchronized(youTubeUrlCache) {
-                youTubeUrlCache[videoId] = CachedYouTubeUrl(resolvedUrl, expiresAt)
-            }
+            precache.putUrl(videoId, resolvedUrl, now)
 
             dataSpec.withUri(resolvedUrl.toUri())
         }

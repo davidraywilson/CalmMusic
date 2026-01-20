@@ -30,6 +30,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -106,10 +107,15 @@ class CalmMusicViewModel(
      * SongUiModel instances.
      */
     suspend fun getAlbumSongsForDetails(album: AlbumUiModel): List<SongUiModel> {
+        val librarySongs = getAlbumSongs(album.id)
+        if (librarySongs.isNotEmpty()) {
+            return librarySongs
+        }
+
         return if (album.sourceType == "YOUTUBE") {
             getYouTubeAlbumSongs(album)
         } else {
-            getAlbumSongs(album.id)
+            emptyList()
         }
     }
 
@@ -131,8 +137,6 @@ class CalmMusicViewModel(
 
             val targetAlbumName = album.title.trim()
 
-            // Prefer tracks whose parsed album metadata matches the selected
-            // album title; fall back to all results if nothing matches.
             val filtered = results.filter { result ->
                 val resultAlbum = result.album?.trim().orEmpty()
                 if (resultAlbum.isEmpty()) return@filter false
@@ -700,20 +704,16 @@ class CalmMusicViewModel(
         localPlaybackMonitorJob?.cancel()
         localPlaybackMonitorJob = viewModelScope.launch {
             var lastLocalQueueIndex: Int? = null
+            var lastYouTubeQueueIndex: Int? = null
             val fastIntervalMs = 750L
             val slowIntervalMs = 2000L
 
-            while (true) {
-                if (!controller.isConnected) {
-                    break
-                }
-
-                var didAutoAdvanceYouTube = false
-
+            while (isActive) {
                 val state = _playbackState.value
                 val currentSong = state.nowPlayingSong
                 val isLocalFile = currentSong?.sourceType == "LOCAL_FILE"
                 val isYouTube = currentSong?.sourceType == "YOUTUBE"
+                var didAutoAdvanceYouTube = false
 
                 if (!isLocalFile && !isYouTube) {
                     delay(slowIntervalMs)
@@ -724,8 +724,7 @@ class CalmMusicViewModel(
                 val position = controller.currentPosition
                 val duration = controller.duration
                 val playbackState = controller.playbackState
-                val isBufferingNow =
-                    !isLocalFile && playbackState == Player.STATE_BUFFERING
+                val isBufferingNow = !isLocalFile && playbackState == Player.STATE_BUFFERING
 
                 var newState = state.copy(
                     isPlaybackPlaying = isPlaying,
@@ -779,12 +778,10 @@ class CalmMusicViewModel(
                                         localController = controller,
                                     )
                                 }
-
                                 hasNext -> {
                                     didAutoAdvanceYouTube = true
                                     playNextInQueue(controller)
                                 }
-
                                 !hasNext && hasMultiple && state.repeatMode == RepeatMode.QUEUE -> {
                                     didAutoAdvanceYouTube = true
                                     startPlaybackFromQueue(
@@ -794,14 +791,29 @@ class CalmMusicViewModel(
                                         localController = controller,
                                     )
                                 }
-
-                                else -> {
-                                    // End of queue with repeat off: leave playback stopped.
-                                }
                             }
                         }
                     } else if (playbackState == Player.STATE_READY && isPlaying) {
                         lastCompletedYouTubeSongId = null
+                    }
+
+                    val currentIndex = state.playbackQueueIndex
+                    val queue = state.playbackQueue
+                    if (currentIndex != null && currentIndex in queue.indices && currentIndex != lastYouTubeQueueIndex) {
+                        lastYouTubeQueueIndex = currentIndex
+                        val windowIds = mutableListOf<String>()
+                        for (offset in -5..5) {
+                            val idx = currentIndex + offset
+                            if (idx in queue.indices) {
+                                val s = queue[idx]
+                                if (s.sourceType == "YOUTUBE") {
+                                    windowIds += s.id
+                                }
+                            }
+                        }
+                        if (windowIds.isNotEmpty()) {
+                            app.youTubePrecacheManager.updateQueueWindow(windowIds)
+                        }
                     }
                 }
 
@@ -814,7 +826,6 @@ class CalmMusicViewModel(
                     (isLocalFile || isYouTube) && isPlaying -> fastIntervalMs
                     else -> slowIntervalMs
                 }
-
                 delay(nextDelayMs)
             }
         }
@@ -840,7 +851,6 @@ class CalmMusicViewModel(
      * appears alongside local and Apple Music songs.
      */
     suspend fun addStreamingSongToLibrary(song: SongUiModel) {
-        // For now we only support YouTube streaming entries.
         if (song.sourceType != "YOUTUBE") return
 
         try {
@@ -877,8 +887,6 @@ class CalmMusicViewModel(
                     trackNumber = song.trackNumber,
                     durationMillis = song.durationMillis,
                     sourceType = "YOUTUBE",
-                    // For streaming, we treat audioUri as the videoId; the actual
-                    // stream URL is resolved on demand via YouTubeStreamResolver.
                     audioUri = song.id,
                     artistId = artistId,
                     releaseYear = null,
@@ -1064,7 +1072,6 @@ class CalmMusicViewModel(
                 )
             }
 
-            // Attempt to restore a previously saved now-playing snapshot.
             val snapshot = withContext(Dispatchers.IO) { nowPlayingStorage.load() }
             if (snapshot != null) {
                 val songsById = allSongs.associateBy { it.id }
