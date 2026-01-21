@@ -53,7 +53,9 @@ fun ArtistDetailsScreen(
     val playbackState by viewModel.playbackState.collectAsState()
     val currentSongId = playbackState.currentSongId
 
-    LaunchedEffect(artistId) {
+    val refreshTrigger by viewModel.libraryRefreshTrigger.collectAsState()
+
+    LaunchedEffect(artistId, refreshTrigger) {
         if (artistId == null) {
             isLoading = false
             return@LaunchedEffect

@@ -31,8 +31,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 /**
  * ViewModel responsible for owning long-lived CalmMusic library state and
@@ -69,6 +71,11 @@ class CalmMusicViewModel(
 
     private val _libraryPlaylists = MutableStateFlow<List<PlaylistUiModel>>(emptyList())
 
+    // A counter that increments whenever the library is refreshed from the DB.
+    // Screens can observe this to trigger a re-fetch of their specific content.
+    private val _libraryRefreshTrigger = MutableStateFlow(0)
+    val libraryRefreshTrigger: StateFlow<Int> = _libraryRefreshTrigger.asStateFlow()
+
     private val _isLoadingSongs = MutableStateFlow(true)
     val isLoadingSongs: StateFlow<Boolean> = _isLoadingSongs
 
@@ -78,10 +85,111 @@ class CalmMusicViewModel(
     private val _playbackState = MutableStateFlow(PlaybackState())
     val playbackState: StateFlow<PlaybackState> = _playbackState
 
+    /**
+     * Called when a download completes. Checks if the downloaded song is in the
+     * current queue (or is currently playing) and hot-swaps the streaming version
+     * for the local version.
+     */
+    fun onSongDownloaded(youtubeSongId: String, controller: MediaController?) {
+        viewModelScope.launch {
+            // Give the library refresh a moment to propagate completely
+            delay(200)
+
+            val state = _playbackState.value
+            val queue = state.playbackQueue
+
+            // 1. Check if the song is even in our queue
+            val indexInQueue = queue.indexOfFirst { it.id == youtubeSongId && it.sourceType == "YOUTUBE" }
+            if (indexInQueue == -1) return@launch
+
+            // 2. Find the new local version in the recently refreshed library
+            val library = _librarySongs.value
+            val oldSong = queue[indexInQueue]
+
+            // Search strategy:
+            // 1. Exact/Fuzzy Title match
+            // 2. Fallback: Duration match (within 2.5s) + Artist match (catch diff titles)
+            val newLocalSong = library.find { candidate ->
+                if (candidate.sourceType != "LOCAL_FILE") return@find false
+
+                if (areSongsMatching(candidate, oldSong)) return@find true
+
+                // Fallback: Check duration and artist
+                val dur1 = candidate.durationMillis ?: 0L
+                val dur2 = oldSong.durationMillis ?: 0L
+                val durationMatch = abs(dur1 - dur2) < 2500 // 2.5 seconds tolerance
+
+                val artist1 = candidate.artist.lowercase().replace(Regex("[^a-z0-9]"), "")
+                val artist2 = oldSong.artist.lowercase().replace(Regex("[^a-z0-9]"), "")
+                val artistMatch = artist1.isNotEmpty() && (artist1.contains(artist2) || artist2.contains(artist1))
+
+                durationMatch && artistMatch
+            } ?: return@launch
+
+            // 3. Update the Queue
+            val newQueue = queue.toMutableList()
+            // Preserve track number/disc number from the queue version to maintain order
+            newQueue[indexInQueue] = newLocalSong.copy(
+                trackNumber = oldSong.trackNumber,
+                discNumber = oldSong.discNumber
+            )
+
+            // 4. Update State
+            val isNowPlaying = (state.playbackQueueIndex == indexInQueue)
+
+            if (isNowPlaying && controller != null && state.isPlaybackPlaying) {
+                val currentPos = controller.currentPosition
+
+                // Update state immediately so UI shows "Local" and hides streaming buttons
+                val newState = state.copy(
+                    playbackQueue = newQueue,
+                    playbackQueueEntities = newQueue.map { it.toQueueEntity() },
+                    nowPlayingSong = newLocalSong,
+                    currentSongId = newLocalSong.id,
+                    nowPlayingDurationMs = newLocalSong.durationMillis ?: state.nowPlayingDurationMs,
+                    isBuffering = true // Show loading while swapping
+                )
+                _playbackState.value = newState
+                persistPlaybackSnapshot(newState)
+
+                // Restart playback using the new local source at the exact same position
+                startPlaybackFromQueue(
+                    queue = newQueue,
+                    startIndex = indexInQueue,
+                    isNewQueue = false,
+                    localController = controller,
+                    startPositionMs = currentPos
+                )
+            } else {
+                // Just update the queue; hot-swap not needed or not playing
+                val newState = state.copy(
+                    playbackQueue = newQueue,
+                    playbackQueueEntities = newQueue.map { it.toQueueEntity() },
+                    // Only update nowPlaying if it matched (but wasn't playing/controller null)
+                    nowPlayingSong = if (isNowPlaying) newLocalSong else state.nowPlayingSong,
+                    currentSongId = if (isNowPlaying) newLocalSong.id else state.currentSongId
+                )
+                _playbackState.value = newState
+                persistPlaybackSnapshot(newState)
+            }
+        }
+    }
+
     suspend fun getAlbumSongs(albumId: String): List<SongUiModel> {
         return withContext(Dispatchers.IO) {
-            val entities = songDao.getSongsByAlbumId(albumId)
-            entities.map { entity ->
+            val idsToFetch = mutableListOf(albumId)
+
+            if (albumId.startsWith("LOCAL_FILE:")) {
+                idsToFetch.add(albumId.replaceFirst("LOCAL_FILE:", "YOUTUBE:"))
+            } else if (albumId.startsWith("YOUTUBE:")) {
+                idsToFetch.add(albumId.replaceFirst("YOUTUBE:", "LOCAL_FILE:"))
+            }
+
+            val allEntities = idsToFetch.flatMap { id ->
+                songDao.getSongsByAlbumId(id)
+            }.distinctBy { it.id }
+
+            allEntities.map { entity ->
                 SongUiModel(
                     id = entity.id,
                     title = entity.title,
@@ -94,7 +202,7 @@ class CalmMusicViewModel(
                     audioUri = entity.audioUri,
                     album = entity.album,
                 )
-            }
+            }.sortedWith(compareBy({ it.discNumber ?: 1 }, { it.trackNumber ?: 0 }))
         }
     }
 
@@ -137,7 +245,16 @@ class CalmMusicViewModel(
             }
 
             if (matchIndex != -1) {
-                mergedList.add(availableLocal.removeAt(matchIndex))
+                val localSong = availableLocal.removeAt(matchIndex)
+
+                // OVERWRITE: Use the track number and disc number from the YouTube
+                // result to ensure the list is ordered correctly (1, 2, 3...)
+                val displaySong = localSong.copy(
+                    trackNumber = ytSong.trackNumber,
+                    discNumber = ytSong.discNumber
+                )
+
+                mergedList.add(displaySong)
             } else {
                 mergedList.add(ytSong)
             }
@@ -249,24 +366,28 @@ class CalmMusicViewModel(
                     years.filterNotNull().maxOrNull()
                 }
 
-            val albums = albumEntities
-                .sortedWith(
-                    compareByDescending<com.calmapps.calmmusic.data.AlbumEntity> { album ->
-                        // Newest release first; albums without a year go last.
-                        albumIdToYear[album.id] ?: Int.MIN_VALUE
-                    }.thenBy { album -> album.name },
-                )
-                .map { album ->
+            val mergedAlbums = albumEntities
+                .groupBy {
+                    (it.name.lowercase().trim() to (it.artist?.lowercase()?.trim() ?: ""))
+                }
+                .map { (_, duplicates) ->
+                    val primary = duplicates.find { it.sourceType == "LOCAL_FILE" } ?: duplicates.first()
+
                     AlbumUiModel(
-                        id = album.id,
-                        title = album.name,
-                        artist = album.artist,
-                        sourceType = album.sourceType,
-                        releaseYear = albumIdToYear[album.id],
+                        id = primary.id,
+                        title = primary.name,
+                        artist = primary.artist,
+                        sourceType = primary.sourceType,
+                        releaseYear = albumIdToYear[primary.id],
                     )
                 }
+                .sortedWith(
+                    compareByDescending<AlbumUiModel> { album ->
+                        album.releaseYear ?: Int.MIN_VALUE
+                    }.thenBy { album -> album.title },
+                )
 
-            ArtistContent(songs, albums)
+            ArtistContent(songs, mergedAlbums)
         }
     }
 
@@ -367,6 +488,7 @@ class CalmMusicViewModel(
         startIndex: Int,
         isNewQueue: Boolean = true,
         localController: MediaController?,
+        startPositionMs: Long = 0L,
     ) {
         if (queue.isEmpty() || startIndex !in queue.indices) return
 
@@ -392,7 +514,7 @@ class CalmMusicViewModel(
             nowPlayingSong = song,
             isPlaybackPlaying = true,
             isBuffering = shouldShowInitialBuffering,
-            nowPlayingPositionMs = 0L,
+            nowPlayingPositionMs = startPositionMs,
             nowPlayingDurationMs = song.durationMillis ?: 0L,
         )
         _playbackState.value = newState
@@ -430,7 +552,7 @@ class CalmMusicViewModel(
                 controller.setMediaItems(
                     playbackCoordinator.localMediaItemsForQueue,
                     localIndex,
-                    0L
+                    startPositionMs
                 )
 
                 controller.repeatMode = when (repeatMode) {
@@ -766,12 +888,12 @@ class CalmMusicViewModel(
                     continue
                 }
 
+                // Read controller state
                 val isPlaying = controller.playWhenReady
                 val position = controller.currentPosition
                 val duration = controller.duration
                 val playbackState = controller.playbackState
-                val isBufferingNow =
-                    !isLocalFile && playbackState == Player.STATE_BUFFERING
+                val isBufferingNow = !isLocalFile && playbackState == Player.STATE_BUFFERING
 
                 var newState = state.copy(
                     isPlaybackPlaying = isPlaying,
@@ -825,12 +947,10 @@ class CalmMusicViewModel(
                                         localController = controller,
                                     )
                                 }
-
                                 hasNext -> {
                                     didAutoAdvanceYouTube = true
                                     playNextInQueue(controller)
                                 }
-
                                 !hasNext && hasMultiple && state.repeatMode == RepeatMode.QUEUE -> {
                                     didAutoAdvanceYouTube = true
                                     startPlaybackFromQueue(
@@ -839,10 +959,6 @@ class CalmMusicViewModel(
                                         isNewQueue = false,
                                         localController = controller,
                                     )
-                                }
-
-                                else -> {
-                                    // End of queue with repeat off: leave playback stopped.
                                 }
                             }
                         }
@@ -880,7 +996,6 @@ class CalmMusicViewModel(
                     (isLocalFile || isYouTube) && isPlaying -> fastIntervalMs
                     else -> slowIntervalMs
                 }
-
                 delay(nextDelayMs)
             }
         }
@@ -1009,12 +1124,6 @@ class CalmMusicViewModel(
         }
     }
 
-    /**
-     * Reload the in-memory Songs/Albums/Artists lists from the database without
-     * performing any new scans. This is used after targeted operations like
-     * adding a streaming song to the library or ingesting a freshly downloaded
-     * local file.
-     */
     suspend fun refreshLibraryFromDatabase() {
         try {
             val (allSongs, allAlbums) = withContext(Dispatchers.IO) {
@@ -1025,6 +1134,16 @@ class CalmMusicViewModel(
             val allArtistsWithCounts = withContext(Dispatchers.IO) {
                 artistDao.getAllArtistsWithCounts()
             }
+
+            // NEW: Calculate unique album counts per artist
+            val uniqueAlbumCounts = allAlbums
+                .filter { it.artistId != null }
+                .groupBy { it.artistId!! }
+                .mapValues { (_, albums) ->
+                    albums.groupBy {
+                        (it.name.lowercase().trim() to (it.artist?.lowercase()?.trim() ?: ""))
+                    }.count()
+                }
 
             val songModels = allSongs.map { entity ->
                 SongUiModel(
@@ -1053,28 +1172,34 @@ class CalmMusicViewModel(
                     years.filterNotNull().maxOrNull()
                 }
 
-            val albumModels = allAlbums.map { album ->
-                AlbumUiModel(
-                    id = album.id,
-                    title = album.name,
-                    artist = album.artist,
-                    sourceType = album.sourceType,
-                    releaseYear = albumIdToYear[album.id],
-                )
-            }
+            val mergedAlbums = allAlbums
+                .groupBy {
+                    (it.name.lowercase().trim() to (it.artist?.lowercase()?.trim() ?: ""))
+                }
+                .map { (_, duplicates) ->
+                    val primary = duplicates.find { it.sourceType == "LOCAL_FILE" } ?: duplicates.first()
+
+                    AlbumUiModel(
+                        id = primary.id,
+                        title = primary.name,
+                        artist = primary.artist,
+                        sourceType = primary.sourceType,
+                        releaseYear = albumIdToYear[primary.id],
+                    )
+                }
 
             val artistModels = allArtistsWithCounts.map { artist ->
                 ArtistUiModel(
                     id = artist.id,
                     name = artist.name,
                     songCount = artist.songCount,
-                    albumCount = artist.albumCount,
+                    albumCount = uniqueAlbumCounts[artist.id] ?: 0,
                 )
             }
 
             updateLibrary(
                 songs = songModels,
-                albums = albumModels,
+                albums = mergedAlbums,
                 artists = artistModels,
             )
         } catch (_: Exception) {
@@ -1090,6 +1215,8 @@ class CalmMusicViewModel(
         _librarySongs.value = songs
         _libraryAlbums.value = albums
         _libraryArtists.value = artists
+        // Trigger UI refresh for detail screens
+        _libraryRefreshTrigger.value += 1
     }
 
     override fun onCleared() {
@@ -1103,6 +1230,15 @@ class CalmMusicViewModel(
             val allAlbums = withContext(Dispatchers.IO) { albumDao.getAllAlbums() }
             val allArtistsWithCounts = withContext(Dispatchers.IO) { artistDao.getAllArtistsWithCounts() }
             val allPlaylistsWithCounts = withContext(Dispatchers.IO) { playlistDao.getAllPlaylistsWithSongCount() }
+
+            val uniqueAlbumCounts = allAlbums
+                .filter { it.artistId != null }
+                .groupBy { it.artistId!! }
+                .mapValues { (_, albums) ->
+                    albums.groupBy {
+                        (it.name.lowercase().trim() to (it.artist?.lowercase()?.trim() ?: ""))
+                    }.count()
+                }
 
             _librarySongs.value = allSongs.map { entity ->
                 SongUiModel(
@@ -1130,21 +1266,30 @@ class CalmMusicViewModel(
                     years.filterNotNull().maxOrNull()
                 }
 
-            _libraryAlbums.value = allAlbums.map { album ->
-                AlbumUiModel(
-                    id = album.id,
-                    title = album.name,
-                    artist = album.artist,
-                    sourceType = album.sourceType,
-                    releaseYear = albumIdToYear[album.id],
-                )
-            }
+            val mergedAlbums = allAlbums
+                .groupBy {
+                    (it.name.lowercase().trim() to (it.artist?.lowercase()?.trim() ?: ""))
+                }
+                .map { (_, duplicates) ->
+                    val primary = duplicates.find { it.sourceType == "LOCAL_FILE" } ?: duplicates.first()
+
+                    AlbumUiModel(
+                        id = primary.id,
+                        title = primary.name,
+                        artist = primary.artist,
+                        sourceType = primary.sourceType,
+                        releaseYear = albumIdToYear[primary.id],
+                    )
+                }
+
+            _libraryAlbums.value = mergedAlbums
+
             _libraryArtists.value = allArtistsWithCounts.map { artist ->
                 ArtistUiModel(
                     id = artist.id,
                     name = artist.name,
                     songCount = artist.songCount,
-                    albumCount = artist.albumCount,
+                    albumCount = uniqueAlbumCounts[artist.id] ?: 0,
                 )
             }
             _libraryPlaylists.value = allPlaylistsWithCounts.map { playlist ->

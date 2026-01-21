@@ -45,7 +45,9 @@ fun AlbumDetailsScreen(
     val playbackState by viewModel.playbackState.collectAsState()
     val currentSongId = playbackState.currentSongId
 
-    LaunchedEffect(album?.id, album?.sourceType) {
+    val refreshTrigger by viewModel.libraryRefreshTrigger.collectAsState()
+
+    LaunchedEffect(album?.id, album?.sourceType, refreshTrigger) {
         if (album == null) {
             isLoading = false
             return@LaunchedEffect

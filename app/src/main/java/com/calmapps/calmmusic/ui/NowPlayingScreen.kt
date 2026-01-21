@@ -357,28 +357,27 @@ fun NowPlayingScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            Box(
-                modifier = Modifier
-                    .background(
-                        color = MaterialTheme.colorScheme.onSurface,
-                        shape = CircleShape
-                    )
-                    .padding(12.dp, 4.dp)
-            ) {
-                val isLocal = sourceType == "LOCAL_FILE"
-                if (!isLocal || isInLibrary) {
+            val isLocal = sourceType == "LOCAL_FILE"
+            if (!isLocal) {
+                Box(
+                    modifier = Modifier
+                        .background(
+                            color = MaterialTheme.colorScheme.onSurface,
+                            shape = CircleShape
+                        )
+                        .padding(12.dp, 4.dp)
+                ) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (!isLocal) {
-                            Icon(
-                                imageVector = Icons.Outlined.Cloud,
-                                contentDescription = "Streaming source",
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.surface
-                            )
-                        }
 
-                        if (!isLocal && isInLibrary) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.Cloud,
+                            contentDescription = "Streaming source",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.surface
+                        )
+
+                        if (isInLibrary) {
                             Spacer(modifier = Modifier.width(12.dp))
 
                             Icon(

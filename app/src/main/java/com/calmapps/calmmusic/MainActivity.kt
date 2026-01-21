@@ -173,33 +173,45 @@ fun CalmMusic(app: CalmMusic) {
     val playbackState by viewModel.playbackState.collectAsState()
     val downloadStatuses by app.youTubeDownloadManager.downloads.collectAsState()
 
-    // Refresh the in-memory library snapshot whenever one or more downloads
-    // transition into the COMPLETED state so that newly downloaded tracks
-    // appear in Songs/Albums/Artists without requiring a full rescan.
-    var lastCompletedDownloadIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var localMediaController by remember { mutableStateOf<MediaController?>(null) }
+
+    // Fix: Correctly map download IDs (UUIDs) to song IDs (Video IDs)
+    var lastCompletedDownloadUUIDs by remember { mutableStateOf<Set<String>>(emptySet()) }
+
     LaunchedEffect(downloadStatuses) {
-        val completedNow = downloadStatuses
+        // Filter only completed downloads
+        val currentCompletedDownloads = downloadStatuses
             .filter { it.state == YouTubeDownloadStatus.State.COMPLETED }
-            .map { it.id }
-            .toSet()
-        val newCompleted = completedNow - lastCompletedDownloadIds
-        if (newCompleted.isNotEmpty()) {
+
+        // Get the set of UUIDs for currently completed downloads
+        val currentCompletedUUIDs = currentCompletedDownloads.map { it.id }.toSet()
+
+        // Find which UUIDs are new since the last check
+        val newCompletedUUIDs = currentCompletedUUIDs - lastCompletedDownloadUUIDs
+
+        if (newCompletedUUIDs.isNotEmpty()) {
+            // 1. Refresh the library to pick up new database entries
             viewModel.refreshLibraryFromDatabase()
+
+            // 2. Identify the actual Song IDs (Video IDs) for the newly finished downloads
+            val newSongIds = currentCompletedDownloads
+                .filter { it.id in newCompletedUUIDs }
+                .map { it.songId } // <--- Key fix: Pass songId, not UUID
+
+            // 3. Notify ViewModel to hot-swap playback
+            newSongIds.forEach { songId ->
+                viewModel.onSongDownloaded(songId, localMediaController)
+            }
         }
-        lastCompletedDownloadIds = completedNow
+        lastCompletedDownloadUUIDs = currentCompletedUUIDs
     }
 
-    // Local music settings state (needed by download/rescan flows)
     val includeLocalMusicState = settingsManager.includeLocalMusic.collectAsState()
     val localMusicFoldersState = settingsManager.localMusicFolders.collectAsState()
     val includeLocalMusic = includeLocalMusicState.value
     val localMusicFolders = localMusicFoldersState.value
-
     val completeAlbumsWithYouTubeState = settingsManager.completeAlbumsWithYouTube.collectAsState()
     val completeAlbumsWithYouTube = completeAlbumsWithYouTubeState.value
-
-    // Download state for YouTube tracks (first-time folder picking only). The
-    // actual download work and progress tracking lives in YouTubeDownloadManager.
     var pendingDownloadSong by remember { mutableStateOf<SongUiModel?>(null) }
     val downloadFolderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
@@ -236,10 +248,6 @@ fun CalmMusic(app: CalmMusic) {
         val calmUriString = calmMusicDir.uri.toString()
         settingsManager.setDownloadFolderUri(calmUriString)
         settingsManager.addLocalMusicFolder(calmUriString)
-
-        // Kick off the download via the shared manager. Progress and completion
-        // are reflected in the manager's StateFlow and can be observed from the
-        // Now Playing screen or the Downloads tab in settings.
         app.youTubeDownloadManager.enqueueDownload(songToDownload)
 
         libraryScope.launch {
@@ -307,12 +315,8 @@ fun CalmMusic(app: CalmMusic) {
     )
 
     val canNavigateBack = navController.previousBackStackEntry != null
-
-    var localMediaController by remember { mutableStateOf<MediaController?>(null) }
-
     val streamingProviderState = settingsManager.streamingProvider.collectAsState()
     val streamingProvider = streamingProviderState.value
-
     var isAuthenticated by remember { mutableStateOf(app.tokenProvider.getUserToken().isNotEmpty()) }
 
     val isStreamingAvailable by remember(streamingProvider, isAuthenticated) {
@@ -325,7 +329,6 @@ fun CalmMusic(app: CalmMusic) {
     }
 
     val librarySongs by viewModel.librarySongs.collectAsState()
-
     val librarySongIds = remember(librarySongs) {
         librarySongs.map { it.id }.toSet()
     }
@@ -465,8 +468,6 @@ fun CalmMusic(app: CalmMusic) {
                             )
                         }
 
-                        // Pre-cache the first few YouTube results so playback can
-                        // start without blocking on NewPipe resolution.
                         val topVideoIds = songResults.take(5).map { it.videoId }
                         app.youTubePrecacheManager.precacheSearchResults(topVideoIds)
                     }
@@ -611,8 +612,6 @@ fun CalmMusic(app: CalmMusic) {
         if (currentDestination?.route == Screen.Search.route) {
             focusRequester.requestFocus()
         } else {
-            // When leaving the search screen, drop the dedicated search window
-            // and rely on the queue-based window instead.
             app.youTubePrecacheManager.clearSearchWindow()
         }
         if (currentDestination?.route != Screen.Playlists.route && isPlaylistsEditMode) {
@@ -987,7 +986,6 @@ fun CalmMusic(app: CalmMusic) {
                                             selectedSongIds = selectedIds,
                                         )
 
-                                        // Update playlist song count in the local UI snapshot.
                                         libraryPlaylists = libraryPlaylists.map { existingPlaylist ->
                                             if (existingPlaylist.id == playlist.id) {
                                                 existingPlaylist.copy(songCount = result.totalSongCount)
@@ -1064,7 +1062,7 @@ fun CalmMusic(app: CalmMusic) {
                             navController.navigate(Screen.ArtistDetails.route) {
                                 launchSingleTop = true
                             }
-                        }
+                        },
                     )
                 }
                 composable(Screen.Songs.route) {
