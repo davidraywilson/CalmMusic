@@ -46,6 +46,7 @@ class CalmMusicViewModel(
 ) : AndroidViewModel(application) {
 
     private val app: CalmMusic
+        @OptIn(UnstableApi::class)
         get() = getApplication() as CalmMusic
 
     private val database: CalmMusicDatabase by lazy { CalmMusicDatabase.getDatabase(app) }
@@ -71,8 +72,6 @@ class CalmMusicViewModel(
 
     private val _libraryPlaylists = MutableStateFlow<List<PlaylistUiModel>>(emptyList())
 
-    // A counter that increments whenever the library is refreshed from the DB.
-    // Screens can observe this to trigger a re-fetch of their specific content.
     private val _libraryRefreshTrigger = MutableStateFlow(0)
     val libraryRefreshTrigger: StateFlow<Int> = _libraryRefreshTrigger.asStateFlow()
 
@@ -92,29 +91,22 @@ class CalmMusicViewModel(
      */
     fun onSongDownloaded(youtubeSongId: String, controller: MediaController?) {
         viewModelScope.launch {
-            // Give the library refresh a moment to propagate completely
             delay(200)
 
             val state = _playbackState.value
             val queue = state.playbackQueue
 
-            // 1. Check if the song is even in our queue
             val indexInQueue = queue.indexOfFirst { it.id == youtubeSongId && it.sourceType == "YOUTUBE" }
             if (indexInQueue == -1) return@launch
 
-            // 2. Find the new local version in the recently refreshed library
             val library = _librarySongs.value
             val oldSong = queue[indexInQueue]
 
-            // Search strategy:
-            // 1. Exact/Fuzzy Title match
-            // 2. Fallback: Duration match (within 2.5s) + Artist match (catch diff titles)
             val newLocalSong = library.find { candidate ->
                 if (candidate.sourceType != "LOCAL_FILE") return@find false
 
                 if (areSongsMatching(candidate, oldSong)) return@find true
 
-                // Fallback: Check duration and artist
                 val dur1 = candidate.durationMillis ?: 0L
                 val dur2 = oldSong.durationMillis ?: 0L
                 val durationMatch = abs(dur1 - dur2) < 2500 // 2.5 seconds tolerance
@@ -126,21 +118,17 @@ class CalmMusicViewModel(
                 durationMatch && artistMatch
             } ?: return@launch
 
-            // 3. Update the Queue
             val newQueue = queue.toMutableList()
-            // Preserve track number/disc number from the queue version to maintain order
             newQueue[indexInQueue] = newLocalSong.copy(
                 trackNumber = oldSong.trackNumber,
                 discNumber = oldSong.discNumber
             )
 
-            // 4. Update State
             val isNowPlaying = (state.playbackQueueIndex == indexInQueue)
 
             if (isNowPlaying && controller != null && state.isPlaybackPlaying) {
                 val currentPos = controller.currentPosition
 
-                // Update state immediately so UI shows "Local" and hides streaming buttons
                 val newState = state.copy(
                     playbackQueue = newQueue,
                     playbackQueueEntities = newQueue.map { it.toQueueEntity() },
@@ -152,7 +140,6 @@ class CalmMusicViewModel(
                 _playbackState.value = newState
                 persistPlaybackSnapshot(newState)
 
-                // Restart playback using the new local source at the exact same position
                 startPlaybackFromQueue(
                     queue = newQueue,
                     startIndex = indexInQueue,
@@ -161,11 +148,9 @@ class CalmMusicViewModel(
                     startPositionMs = currentPos
                 )
             } else {
-                // Just update the queue; hot-swap not needed or not playing
                 val newState = state.copy(
                     playbackQueue = newQueue,
                     playbackQueueEntities = newQueue.map { it.toQueueEntity() },
-                    // Only update nowPlaying if it matched (but wasn't playing/controller null)
                     nowPlayingSong = if (isNowPlaying) newLocalSong else state.nowPlayingSong,
                     currentSongId = if (isNowPlaying) newLocalSong.id else state.currentSongId
                 )
@@ -246,9 +231,6 @@ class CalmMusicViewModel(
 
             if (matchIndex != -1) {
                 val localSong = availableLocal.removeAt(matchIndex)
-
-                // OVERWRITE: Use the track number and disc number from the YouTube
-                // result to ensure the list is ordered correctly (1, 2, 3...)
                 val displaySong = localSong.copy(
                     trackNumber = ytSong.trackNumber,
                     discNumber = ytSong.discNumber
@@ -571,6 +553,7 @@ class CalmMusicViewModel(
                 viewModelScope.launch {
                     playYouTubeSongInQueue(song, startIndex, controller)
                 }
+                playbackCoordinator.localQueueInitialized = true
             }
         }
     }
@@ -873,7 +856,7 @@ class CalmMusicViewModel(
         localPlaybackMonitorJob = viewModelScope.launch {
             var lastLocalQueueIndex: Int? = null
             var lastYouTubeQueueIndex: Int? = null
-            val fastIntervalMs = 750L
+            val fastIntervalMs = 200L
             val slowIntervalMs = 2000L
 
             while (true) {
