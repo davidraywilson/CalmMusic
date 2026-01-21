@@ -75,6 +75,8 @@ import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.AlbumsScreen
 import com.calmapps.calmmusic.ui.ArtistDetailsScreen
 import com.calmapps.calmmusic.ui.ArtistsScreen
+import com.calmapps.calmmusic.ui.DownloadsScreen
+import com.calmapps.calmmusic.ui.MoreScreen
 import com.calmapps.calmmusic.ui.NowPlayingScreen
 import com.calmapps.calmmusic.ui.PermissionsOnboardingScreen
 import com.calmapps.calmmusic.ui.PlaylistAddSongsScreen
@@ -212,13 +214,17 @@ fun CalmMusic(app: CalmMusic) {
     val localMusicFolders = localMusicFoldersState.value
     val completeAlbumsWithYouTubeState = settingsManager.completeAlbumsWithYouTube.collectAsState()
     val completeAlbumsWithYouTube = completeAlbumsWithYouTubeState.value
+
+    // Explicitly track download folder state for immediate UI updates
+    var currentDownloadFolder by remember { mutableStateOf(settingsManager.getDownloadFolderUri()) }
+
     var pendingDownloadSong by remember { mutableStateOf<SongUiModel?>(null) }
     val downloadFolderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
         val songToDownload = pendingDownloadSong
         pendingDownloadSong = null
-        if (uri == null || songToDownload == null) {
+        if (uri == null) {
             return@rememberLauncherForActivityResult
         }
 
@@ -248,14 +254,19 @@ fun CalmMusic(app: CalmMusic) {
         val calmUriString = calmMusicDir.uri.toString()
         settingsManager.setDownloadFolderUri(calmUriString)
         settingsManager.addLocalMusicFolder(calmUriString)
-        app.youTubeDownloadManager.enqueueDownload(songToDownload)
 
-        libraryScope.launch {
-            snackbarHostState.showSnackbar(
-                message = "Download started",
-                withDismissAction = false,
-                duration = SnackbarDurationMMD.Short,
-            )
+        // Update state
+        currentDownloadFolder = calmUriString
+
+        if (songToDownload != null) {
+            app.youTubeDownloadManager.enqueueDownload(songToDownload)
+            libraryScope.launch {
+                snackbarHostState.showSnackbar(
+                    message = "Download started",
+                    withDismissAction = false,
+                    duration = SnackbarDurationMMD.Short,
+                )
+            }
         }
     }
 
@@ -1173,6 +1184,41 @@ fun CalmMusic(app: CalmMusic) {
                         },
                     )
                 }
+
+                // New "More" Screen
+                composable(Screen.More.route) {
+                    MoreScreen(
+                        onNavigateToDownloads = {
+                            navController.navigate(Screen.Downloads.route) {
+                                launchSingleTop = true
+                            }
+                        },
+                        onNavigateToSettings = {
+                            settingsSelectedTab = 0
+                            navController.navigate(Screen.Settings.route) {
+                                launchSingleTop = true
+                            }
+                        },
+                    )
+                }
+
+                // New "Downloads" Screen
+                composable(Screen.Downloads.route) {
+                    DownloadsScreen(
+                        downloads = downloadStatuses,
+                        currentDownloadFolder = currentDownloadFolder,
+                        onChangeDownloadFolderClick = {
+                            downloadFolderPickerLauncher.launch(null)
+                        },
+                        onCancelDownloadClick = { id ->
+                            app.youTubeDownloadManager.cancelDownload(id)
+                        },
+                        onClearFinishedDownloadsClick = {
+                            app.youTubeDownloadManager.clearFinishedDownloads()
+                        },
+                    )
+                }
+
                 composable(Screen.Settings.route) {
                     val context = LocalContext.current
                     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1212,28 +1258,6 @@ fun CalmMusic(app: CalmMusic) {
                             } catch (_: SecurityException) {
                             }
                             settingsManager.addLocalMusicFolder(uri.toString())
-                        }
-                    }
-
-                    val downloadsFolderPickerLauncher = rememberLauncherForActivityResult(
-                        contract = ActivityResultContracts.OpenDocumentTree(),
-                    ) { uri ->
-                        if (uri != null) {
-                            val flags =
-                                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                            try {
-                                context.contentResolver.takePersistableUriPermission(uri, flags)
-                            } catch (_: SecurityException) {
-                            }
-                            val baseDir = DocumentFile.fromTreeUri(context, uri)
-                            if (baseDir != null) {
-                                val calmMusicDir = baseDir.findFile("CalmMusic")?.takeIf { it.isDirectory }
-                                    ?: baseDir.createDirectory("CalmMusic")
-                                    ?: baseDir
-                                val calmUriString = calmMusicDir.uri.toString()
-                                settingsManager.setDownloadFolderUri(calmUriString)
-                                settingsManager.addLocalMusicFolder(calmUriString)
-                            }
                         }
                     }
 
@@ -1289,11 +1313,6 @@ fun CalmMusic(app: CalmMusic) {
                         localScanSkippedUnchanged = localScanSkippedUnchanged,
                         localScanIndexedNewOrUpdated = localScanIndexedNewOrUpdated,
                         localScanDeletedMissing = localScanDeletedMissing,
-                        downloads = downloadStatuses,
-                        currentDownloadFolder = settingsManager.getDownloadFolderUri(),
-                        onChangeDownloadFolderClick = { downloadsFolderPickerLauncher.launch(null) },
-                        onCancelDownloadClick = { id -> app.youTubeDownloadManager.cancelDownload(id) },
-                        onClearFinishedDownloadsClick = { app.youTubeDownloadManager.clearFinishedDownloads() },
                     )
                 }
             }
@@ -1780,6 +1799,8 @@ fun getAppBarTitle(currentDestination: NavDestination?): String {
         Screen.Artists.route -> "Artists"
         Screen.ArtistDetails.route -> "Artist"
         Screen.Search.route -> "Search"
+        Screen.More.route -> "More"
+        Screen.Downloads.route -> "Downloads"
         Screen.Settings.route -> "Settings"
         Screen.PlaylistEdit.route -> "Edit Playlist"
         Screen.PlaylistAddSongs.route -> "Add Songs"
