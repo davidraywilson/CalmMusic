@@ -31,7 +31,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
-        // Enable core library desugaring for Java 8+ APIs used by NewPipeExtractor
         isCoreLibraryDesugaringEnabled = true
     }
 
@@ -59,7 +58,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("androidx.activity:activity-compose:1.8.0")
-    // Required by MusicKit AAR resources (Theme.AppCompat.*, colorPrimaryDark, etc.)
     implementation("androidx.appcompat:appcompat:1.7.0")
 
     // Apple MusicKit for Android
@@ -100,7 +98,6 @@ dependencies {
 
     implementation("com.github.teamnewpipe:NewPipeExtractor:v0.24.8")
 
-    // Core library desugaring for Java 8+ APIs (URLEncoder.encode with Charset, etc.)
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.4")
 
     testImplementation("junit:junit:4.13.2")
@@ -112,4 +109,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     implementation("androidx.lifecycle:lifecycle-process:2.8.7")
+
+    // meta tag library
+    implementation("net.jthink:jaudiotagger:3.0.1")
 }

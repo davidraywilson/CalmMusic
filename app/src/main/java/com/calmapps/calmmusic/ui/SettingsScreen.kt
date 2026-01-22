@@ -1,5 +1,6 @@
 package com.calmapps.calmmusic.ui
 
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,22 +11,27 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.calmapps.calmmusic.data.StreamingProvider
 import com.mudita.mmd.components.buttons.ButtonMMD
 import com.mudita.mmd.components.buttons.OutlinedButtonMMD
+import com.mudita.mmd.components.chips.SuggestionChipMMD
 import com.mudita.mmd.components.divider.HorizontalDividerMMD
 import com.mudita.mmd.components.lazy.LazyColumnMMD
+import com.mudita.mmd.components.radio_button.RadioButtonMMD
 import com.mudita.mmd.components.slider.SliderMMD
 import com.mudita.mmd.components.switcher.SwitchMMD
 import com.mudita.mmd.components.tabs.PrimaryTabRowMMD
@@ -37,8 +43,8 @@ import com.mudita.mmd.components.text.TextMMD
 fun SettingsScreen(
     selectedTab: Int,
     onSelectedTabChange: (Int) -> Unit,
-    streamingProvider: com.calmapps.calmmusic.data.StreamingProvider,
-    onStreamingProviderChange: (com.calmapps.calmmusic.data.StreamingProvider) -> Unit,
+    streamingProvider: StreamingProvider,
+    onStreamingProviderChange: (StreamingProvider) -> Unit,
     completeAlbumsWithYouTube: Boolean,
     onCompleteAlbumsWithYouTubeChange: (Boolean) -> Unit,
     includeLocalMusic: Boolean,
@@ -63,7 +69,10 @@ fun SettingsScreen(
     // 0 = General, 1 = Streaming, 2 = Local
     val tabOptions = listOf("General", "Streaming", "Local")
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+    ) {
         PrimaryTabRowMMD(selectedTabIndex = selectedTab) {
             tabOptions.forEachIndexed { index, title ->
                 TabMMD(
@@ -83,14 +92,16 @@ fun SettingsScreen(
         if (selectedTab == 0) {
             // General tab - app-wide settings
             LazyColumnMMD(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.Top,
             ) {
                 item {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
+                            .padding(end = 16.dp),
                     ) {
                         TextMMD(
                             text = "Background playback",
@@ -129,153 +140,178 @@ fun SettingsScreen(
             }
         } else if (selectedTab == 1) {
             LazyColumnMMD(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.Top,
             ) {
                 item {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
                     ) {
                         TextMMD(
                             text = "Streaming source",
                             fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                         )
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        HorizontalDividerMMD(
+                            thickness = 1.dp,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
 
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onStreamingProviderChange(com.calmapps.calmmusic.data.StreamingProvider.APPLE_MUSIC) }
-                                .padding(vertical = 8.dp),
+                                .padding(end = 16.dp),
                             verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextMMD(
+                                    text = "Apple Music",
+                                    fontSize = 16.sp,
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                SuggestionChipMMD(
+                                    label = { TextMMD(text = "Coming Soon", fontSize = 12.sp) },
+                                    onClick = {}
+                                )
+                            }
+                            RadioButtonMMD(
+                                selected = streamingProvider == StreamingProvider.APPLE_MUSIC,
+                                onClick = { },
+                                enabled = false
+                            )
+                        }
+
+                        DashedDivider(thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onStreamingProviderChange(StreamingProvider.YOUTUBE) }
+                                .padding(end = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextMMD(
+                                text = "YouTube Music",
+                                fontSize = 16.sp,
+                                modifier = Modifier.weight(1f),
+                            )
+                            RadioButtonMMD(
+                                selected = streamingProvider == StreamingProvider.YOUTUBE,
+                                onClick = { onStreamingProviderChange(StreamingProvider.YOUTUBE) },
+                            )
+                        }
+                    }
+                }
+
+                if (streamingProvider == StreamingProvider.YOUTUBE) {
+                    item {
+                        Spacer(modifier = Modifier.height(24.dp))
+
+                        TextMMD(
+                            text = "Library features",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+
+                        HorizontalDividerMMD(
+                            thickness = 1.dp,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(end = 16.dp)
+                        ) {
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onCompleteAlbumsWithYouTubeChange(!completeAlbumsWithYouTube) }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 16.dp)
+                                ) {
+                                    TextMMD(
+                                        text = "Complete albums with YouTube",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+
+                                    Spacer(modifier = Modifier.height(2.dp))
+
+                                    TextMMD(
+                                        text = "When viewing a local album, search YouTube for missing songs and display them in the list.",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                SwitchMMD(
+                                    checked = completeAlbumsWithYouTube,
+                                    onCheckedChange = onCompleteAlbumsWithYouTubeChange,
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                }
+
+                if (streamingProvider == StreamingProvider.APPLE_MUSIC) {
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        HorizontalDividerMMD(
+                            thickness = 1.dp,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(end = 16.dp)
                         ) {
                             TextMMD(
                                 text = "Apple Music",
                                 fontSize = 16.sp,
-                                modifier = Modifier.weight(1f),
+                                fontWeight = FontWeight.SemiBold,
                             )
-                            SwitchMMD(
-                                checked = streamingProvider == com.calmapps.calmmusic.data.StreamingProvider.APPLE_MUSIC,
-                                onCheckedChange = { checked ->
-                                    if (checked) {
-                                        onStreamingProviderChange(com.calmapps.calmmusic.data.StreamingProvider.APPLE_MUSIC)
-                                    }
-                                },
-                            )
-                        }
 
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onStreamingProviderChange(com.calmapps.calmmusic.data.StreamingProvider.YOUTUBE) }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
+                            Spacer(modifier = Modifier.height(8.dp))
+
                             TextMMD(
-                                text = "YouTube Music (via NewPipe)",
+                                text = if (isAppleMusicAuthenticated) "Apple Music is connected" else "Apple Music is not connected",
                                 fontSize = 16.sp,
-                                modifier = Modifier.weight(1f),
                             )
-                            SwitchMMD(
-                                checked = streamingProvider == com.calmapps.calmmusic.data.StreamingProvider.YOUTUBE,
-                                onCheckedChange = { checked ->
-                                    if (checked) {
-                                        onStreamingProviderChange(com.calmapps.calmmusic.data.StreamingProvider.YOUTUBE)
-                                    }
-                                },
-                            )
-                        }
 
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        HorizontalDividerMMD()
-                    }
-                }
-
-                item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
-                    ) {
-                        TextMMD(
-                            text = "Library features",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onCompleteAlbumsWithYouTubeChange(!completeAlbumsWithYouTube) }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            if (!isAppleMusicAuthenticated) {
+                                Spacer(modifier = Modifier.height(4.dp))
                                 TextMMD(
-                                    text = "Complete albums with YouTube",
-                                    fontSize = 16.sp,
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                TextMMD(
-                                    text = "When viewing a local album, search YouTube for missing songs and display them in the list.",
-                                    fontSize = 13.sp,
-                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                                    text = "Connect to access your Apple Music library.",
+                                    fontSize = 14.sp,
                                 )
                             }
-                            SwitchMMD(
-                                checked = completeAlbumsWithYouTube,
-                                onCheckedChange = onCompleteAlbumsWithYouTubeChange,
-                            )
-                        }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(16.dp))
 
-                        HorizontalDividerMMD()
-                    }
-                }
-
-                // Apple Music connection section (always visible)
-                item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
-                    ) {
-                        TextMMD(
-                            text = "Apple Music",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        TextMMD(
-                            text = if (isAppleMusicAuthenticated) "Apple Music is connected" else "Apple Music is not connected",
-                            fontSize = 16.sp,
-                        )
-
-                        if (!isAppleMusicAuthenticated) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            TextMMD(
-                                text = "Connect to access your Apple Music library.",
-                                fontSize = 14.sp,
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        if (!isAppleMusicAuthenticated) {
-                            ButtonMMD(
-                                onClick = onConnectAppleMusicClick
-                            ) {
-                                TextMMD(text = "Connect")
+                            if (!isAppleMusicAuthenticated) {
+                                ButtonMMD(
+                                    onClick = onConnectAppleMusicClick
+                                ) {
+                                    TextMMD(text = "Connect")
+                                }
                             }
                         }
                     }
@@ -327,9 +363,10 @@ fun SettingsScreen(
                                 fontSize = 14.sp,
                             )
 
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            HorizontalDividerMMD()
+                            HorizontalDividerMMD(
+                                thickness = 1.dp,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
                         }
                     }
 
@@ -514,7 +551,7 @@ fun SettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 TextMMD(
-                                    text = folder,
+                                    text = formatDirectoryPath(folder),
                                     fontSize = 14.sp,
                                     modifier = Modifier.weight(1f),
                                 )
@@ -531,4 +568,20 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+private fun formatDirectoryPath(uriString: String): String {
+    try {
+        val decoded = Uri.decode(uriString)
+        val marker = "primary:"
+        val index = decoded.indexOf(marker)
+        if (index != -1) {
+            val afterMarker = decoded.substring(index + marker.length)
+            val path = afterMarker.replace("/", " > ")
+            return if (path.isEmpty()) "Primary" else "Primary > $path"
+        }
+    } catch (e: Exception) {
+        // Fallback
+    }
+    return uriString
 }

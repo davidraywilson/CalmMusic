@@ -357,7 +357,8 @@ fun CalmMusic(app: CalmMusic) {
     var selectedAlbum by remember { mutableStateOf<AlbumUiModel?>(null) }
 
     var selectedPlaylist by remember { mutableStateOf<PlaylistUiModel?>(null) }
-    var playlistAddSongsSelection by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var playlistAddSongsSelectionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+
     var isPlaylistsEditMode by remember { mutableStateOf(false) }
     var isPlaylistDetailsMenuExpanded by remember { mutableStateOf(false) }
     val playlistEditSelectionIds = remember { mutableSetOf<String>() }
@@ -375,11 +376,11 @@ fun CalmMusic(app: CalmMusic) {
     val playbackQueue = playbackState.playbackQueue
     val currentSongId = playbackState.currentSongId
     val nowPlayingSong = playbackState.nowPlayingSong
-    val isBuffering = playbackState.isBuffering
     var isPlaybackPlaying = playbackState.isPlaybackPlaying
 
     var showNowPlaying by remember { mutableStateOf(false) }
     var showAddToPlaylistDialog by remember { mutableStateOf(false) }
+    var songToAddToPlaylist by remember { mutableStateOf<SongUiModel?>(null) }
     var pendingAddToNewPlaylistSong by remember { mutableStateOf<SongUiModel?>(null) }
 
     // Search state
@@ -535,7 +536,7 @@ fun CalmMusic(app: CalmMusic) {
     }
 
     fun togglePlayback() {
-        val song = nowPlayingSong ?: return
+        nowPlayingSong ?: return
         viewModel.togglePlayback(localMediaController)
         isPlaybackPlaying = !isPlaybackPlaying
     }
@@ -612,6 +613,54 @@ fun CalmMusic(app: CalmMusic) {
             snackbarMessage?.let { message ->
                 snackbarHostState.showSnackbar(
                     message = message,
+                    withDismissAction = false,
+                    duration = SnackbarDurationMMD.Short,
+                )
+            }
+        }
+    }
+
+    val onAddToPlaylist: (SongUiModel) -> Unit = { song ->
+        songToAddToPlaylist = song
+        showAddToPlaylistDialog = true
+    }
+
+    val onRemoveFromLibrary: (SongUiModel) -> Unit = { song ->
+        libraryScope.launch {
+            try {
+                viewModel.removeSongFromLibrary(song)
+                snackbarHostState.showSnackbar(
+                    message = "Removed from library",
+                    withDismissAction = false,
+                    duration = SnackbarDurationMMD.Short,
+                )
+            } catch (e: Exception) {
+                snackbarHostState.showSnackbar(
+                    message = "Failed to remove: ${e.message}",
+                    withDismissAction = false,
+                    duration = SnackbarDurationMMD.Short,
+                )
+            }
+        }
+    }
+
+    val onDelete: (SongUiModel) -> Unit = { song ->
+        if (song.sourceType == "YOUTUBE") {
+            val download = downloadStatuses.find { it.songId == song.id }
+            if (download != null) {
+                app.youTubeDownloadManager.cancelDownload(download.id)
+                libraryScope.launch {
+                    snackbarHostState.showSnackbar(
+                        message = "Deleting download...",
+                        withDismissAction = false,
+                        duration = SnackbarDurationMMD.Short,
+                    )
+                }
+            }
+        } else {
+            libraryScope.launch {
+                snackbarHostState.showSnackbar(
+                    message = "Cannot delete local files",
                     withDismissAction = false,
                     duration = SnackbarDurationMMD.Short,
                 )
@@ -799,7 +848,7 @@ fun CalmMusic(app: CalmMusic) {
                 },
                 onAddSongsClick = {
                     if (selectedPlaylist != null) {
-                        playlistAddSongsSelection = emptySet()
+                        playlistAddSongsSelectionIds = emptySet()
                         navController.navigate(Screen.PlaylistAddSongs.route) {
                             launchSingleTop = true
                         }
@@ -808,6 +857,9 @@ fun CalmMusic(app: CalmMusic) {
                 onShuffleClick = { songs ->
                     startShuffledPlaybackFromQueue(songs)
                 },
+                onAddToPlaylistClick = onAddToPlaylist,
+                onRemoveFromLibraryClick = onRemoveFromLibrary,
+                onDeleteClick = onDelete,
             )
         }
         composable(Screen.PlaylistAddSongs.route) {
@@ -827,9 +879,9 @@ fun CalmMusic(app: CalmMusic) {
 
             PlaylistAddSongsScreen(
                 songs = candidateSongs,
-                initialSelectedSongIds = playlistAddSongsSelection,
+                initialSelectedSongIds = playlistAddSongsSelectionIds,
                 onSelectionChanged = { selectedIds ->
-                    playlistAddSongsSelection = selectedIds
+                    playlistAddSongsSelectionIds = selectedIds
                 },
             )
         }
@@ -953,14 +1005,14 @@ fun CalmMusic(app: CalmMusic) {
                             isPlaylistDetailsMenuExpanded = false
                             val playlist = selectedPlaylist
                             if (playlist != null) {
-                                playlistAddSongsSelection = emptySet()
+                                playlistAddSongsSelectionIds = emptySet()
                                 navController.navigate(Screen.PlaylistAddSongs.route) { launchSingleTop = true }
                             }
                         },
                         onPlaylistDetailsRenameClick = {
                             isPlaylistDetailsMenuExpanded = false
                             pendingAddToNewPlaylistSong = null
-                            playlistAddSongsSelection = emptySet()
+                            playlistAddSongsSelectionIds = emptySet()
                             navController.navigate(Screen.PlaylistEdit.route) { launchSingleTop = true }
                         },
                         onPlaylistDetailsDeleteClick = {
@@ -985,7 +1037,7 @@ fun CalmMusic(app: CalmMusic) {
                         },
                         onPlaylistAddSongsDoneClick = {
                             val playlist = selectedPlaylist
-                            val selectedIds = playlistAddSongsSelection
+                            val selectedIds = playlistAddSongsSelectionIds
                             if (playlist == null || selectedIds.isEmpty()) {
                                 navController.popBackStack()
                             } else {
@@ -1017,7 +1069,7 @@ fun CalmMusic(app: CalmMusic) {
                                     } catch (_: Exception) {
                                         snackbarMessage = "Couldn't add songs to playlist"
                                     } finally {
-                                        playlistAddSongsSelection = emptySet()
+                                        playlistAddSongsSelectionIds = emptySet()
                                         navController.popBackStack()
                                     }
 
@@ -1078,7 +1130,6 @@ fun CalmMusic(app: CalmMusic) {
                 }
                 composable(Screen.Songs.route) {
                     SongsScreen(
-                        isAuthenticated = isAuthenticated,
                         songs = librarySongs,
                         isLoading = isLoadingSongs,
                         errorMessage = songsError,
@@ -1092,6 +1143,9 @@ fun CalmMusic(app: CalmMusic) {
                         onShuffleClick = {
                             startShuffledPlaybackFromQueue(librarySongs)
                         },
+                        onAddToPlaylistClick = onAddToPlaylist,
+                        onRemoveFromLibraryClick = onRemoveFromLibrary,
+                        onDeleteClick = onDelete,
                         onOpenStreamingSettingsClick = openStreamingSettings,
                         onOpenLocalSettingsClick = openLocalSettings,
                     )
@@ -1206,7 +1260,7 @@ fun CalmMusic(app: CalmMusic) {
                 composable(Screen.Downloads.route) {
                     DownloadsScreen(
                         downloads = downloadStatuses,
-                        currentDownloadFolder = currentDownloadFolder,
+                        currentDownloadFolder = currentDownloadFolder ?: "",
                         onChangeDownloadFolderClick = {
                             downloadFolderPickerLauncher.launch(null)
                         },
@@ -1376,9 +1430,8 @@ fun CalmMusic(app: CalmMusic) {
                     viewModel.cycleRepeatMode(localMediaController)
                 },
                 onAddToPlaylistClick = {
-                    if (playbackState.nowPlayingSong != null) {
-                        showAddToPlaylistDialog = true
-                    }
+                    songToAddToPlaylist = playbackState.nowPlayingSong
+                    showAddToPlaylistDialog = true
                 },
                 onBackClick = { showNowPlaying = false },
                 isVideo = isLocalVideo,
@@ -1431,8 +1484,8 @@ fun CalmMusic(app: CalmMusic) {
             )
         }
 
-        if (showAddToPlaylistDialog && playbackState.nowPlayingSong != null) {
-            val song = playbackState.nowPlayingSong!!
+        if (showAddToPlaylistDialog && songToAddToPlaylist != null) {
+            val song = songToAddToPlaylist!!
             val configuration = LocalConfiguration.current
             val screenHeight = configuration.screenHeightDp.dp
 

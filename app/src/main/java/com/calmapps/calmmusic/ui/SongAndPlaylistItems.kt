@@ -1,10 +1,12 @@
 package com.calmapps.calmmusic.ui
 
 import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,11 +14,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Clear
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.outlined.LibraryAddCheck
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,14 +34,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mudita.mmd.components.checkbox.CheckboxMMD
+import com.mudita.mmd.components.menus.DropdownMenuItemMMD
+import com.mudita.mmd.components.menus.DropdownMenuMMD
 import com.mudita.mmd.components.text.TextMMD
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SongItem(
     song: SongUiModel,
     showTrackNumber: Boolean = false,
     isCurrentlyPlaying: Boolean,
     onClick: () -> Unit,
+    onAddToPlaylist: () -> Unit = {},
+    onDelete: () -> Unit = {},
+    onRemoveFromLibrary: () -> Unit = {},
+    isDownloaded: Boolean = false,
     showDivider: Boolean = true,
     isInLibrary: Boolean = false,
 ) {
@@ -93,10 +103,15 @@ fun SongItem(
         Pair(local, sub)
     }
 
+    var showMenu by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { showMenu = true }
+            )
             .padding(bottom = 8.dp),
     ) {
         Row(
@@ -165,6 +180,53 @@ fun SongItem(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+            }
+
+            if (showMenu) {
+                Box(modifier = Modifier.wrapContentSize()) {
+                    Icon(
+                        imageVector = Icons.Outlined.Clear,
+                        contentDescription = "Close menu",
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clickable { showMenu = false }
+                    )
+
+                    DropdownMenuMMD(
+                        expanded = true,
+                        onDismissRequest = { showMenu = false }
+                    ) {
+                        DropdownMenuItemMMD(
+                            text = { TextMMD(text = "Add to playlist") },
+                            onClick = {
+                                showMenu = false
+                                onAddToPlaylist()
+                            }
+                        )
+
+                        if (isDownloaded || isLocal) {
+                            DashedDivider(thickness = 1.dp)
+                            DropdownMenuItemMMD(
+                                text = { TextMMD(text = "Delete") },
+                                onClick = {
+                                    showMenu = false
+                                    onDelete()
+                                }
+                            )
+                        }
+
+                        if (isInLibrary && !isLocal && !isDownloaded) {
+                            DashedDivider(thickness = 1.dp)
+                            DropdownMenuItemMMD(
+                                text = { TextMMD(text = "Remove from library") },
+                                onClick = {
+                                    showMenu = false
+                                    onRemoveFromLibrary()
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }

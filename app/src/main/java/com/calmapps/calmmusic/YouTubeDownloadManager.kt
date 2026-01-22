@@ -1,7 +1,9 @@
 package com.calmapps.calmmusic
 
 import android.content.Context
+import androidx.annotation.OptIn
 import androidx.documentfile.provider.DocumentFile
+import androidx.media3.common.util.UnstableApi
 import com.calmapps.calmmusic.data.CalmMusicSettingsManager
 import com.calmapps.calmmusic.data.CalmMusicDatabase
 import com.calmapps.calmmusic.data.LocalMusicScanner
@@ -19,6 +21,12 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.UUID
+import java.io.File
+import java.io.FileOutputStream
+import java.io.FileInputStream
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.TagOptionSingleton
 
 /**
  * Central manager for YouTube downloads so that download state (including progress)
@@ -113,8 +121,8 @@ class YouTubeDownloadManager(
     fun clearFinishedDownloads() {
         _downloads.value = _downloads.value.filterNot { status ->
             status.state == YouTubeDownloadStatus.State.COMPLETED ||
-                status.state == YouTubeDownloadStatus.State.FAILED ||
-                status.state == YouTubeDownloadStatus.State.CANCELED
+                    status.state == YouTubeDownloadStatus.State.FAILED ||
+                    status.state == YouTubeDownloadStatus.State.CANCELED
         }
     }
 
@@ -126,10 +134,12 @@ class YouTubeDownloadManager(
 }
 
 /**
- * Shared internal implementation of the YouTube download pipeline. This is largely
- * a refactoring of the previous performYouTubeDownload function, but with a
- * progress callback and without UI dependencies.
+ * Shared internal implementation of the YouTube download pipeline.
+ *
+ * MODIFIED: This now downloads to a temporary file first, applies metadata tags using Jaudiotagger,
+ * and then copies the tagged file to the final user-selected destination.
  */
+@OptIn(UnstableApi::class)
 internal suspend fun performYouTubeDownloadInternal(
     app: CalmMusic,
     song: com.calmapps.calmmusic.ui.SongUiModel,
@@ -138,23 +148,27 @@ internal suspend fun performYouTubeDownloadInternal(
     client: OkHttpClient,
     onProgress: (Float) -> Unit,
 ): Boolean {
+    var tmpFile: File? = null
     return try {
         val videoId = song.id
 
-        val targetFile = withContext(Dispatchers.IO) {
-            val streamUrl = app.youTubeStreamResolver.getDownloadAudioUrl(videoId)
+        val streamUrl = withContext(Dispatchers.IO) {
+            app.youTubeStreamResolver.getDownloadAudioUrl(videoId)
+        }
 
+        val targetFile = withContext(Dispatchers.IO) {
             val safeTitle = (song.title.ifBlank { videoId })
                 .replace(Regex("""[\\\\/:*?\"<>|]"""), "_")
             val fileName = "$safeTitle.m4a"
+            targetDir.findFile(fileName)
+                ?: targetDir.createFile("audio/mp4", fileName)
+        } ?: throw IllegalStateException("Could not create target file")
 
-            val downloadsDir = targetDir
-            val target = downloadsDir.findFile(fileName)
-                ?: downloadsDir.createFile("audio/mp4", fileName)
-            if (target == null) {
-                throw IllegalStateException("Could not create target file")
-            }
+        tmpFile = withContext(Dispatchers.IO) {
+            File.createTempFile("yt-$videoId-", ".m4a", context.cacheDir)
+        }
 
+        val downloadSuccess = withContext(Dispatchers.IO) {
             val probeRequest = Request.Builder()
                 .url(streamUrl)
                 .head()
@@ -162,82 +176,54 @@ internal suspend fun performYouTubeDownloadInternal(
 
             val (contentLength, supportsRanges) = client.newCall(probeRequest).execute().use { response ->
                 if (!response.isSuccessful) {
-                    throw IllegalStateException("Probe failed: ${'$'}{response.code}")
+                    throw IllegalStateException("Probe failed: ${response.code}")
                 }
                 val length = response.header("Content-Length")?.toLongOrNull() ?: -1L
                 val acceptRanges = response.header("Accept-Ranges")?.contains("bytes", ignoreCase = true) == true
                 length to acceptRanges
             }
 
-            val finalTarget = target
-
             if (contentLength > 0L && supportsRanges) {
-                val tmpFile = kotlin.io.path.createTempFile(
-                    prefix = "yt-$videoId-",
-                    suffix = ".part",
-                    directory = context.cacheDir.toPath(),
-                ).toFile()
+                val chunkCount = 4.coerceAtMost(((contentLength / (5L * 1024 * 1024)).toInt() + 1).coerceAtLeast(2))
+                val chunkSize = contentLength / chunkCount
+                val downloaded = java.util.concurrent.atomic.AtomicLong(0L)
 
-                try {
-                    val chunkCount = 4.coerceAtMost(((contentLength / (5L * 1024 * 1024)).toInt() + 1).coerceAtLeast(2))
-                    val chunkSize = contentLength / chunkCount
-                    val downloaded = java.util.concurrent.atomic.AtomicLong(0L)
+                kotlinx.coroutines.coroutineScope {
+                    repeat(chunkCount) { index ->
+                        val start = index * chunkSize
+                        val endExclusive = if (index == chunkCount - 1) contentLength else (start + chunkSize)
+                        val end = endExclusive - 1
 
-                    kotlinx.coroutines.coroutineScope {
-                        repeat(chunkCount) { index ->
-                            val start = index * chunkSize
-                            val endExclusive = if (index == chunkCount - 1) contentLength else (start + chunkSize)
-                            val end = endExclusive - 1
+                        launch(Dispatchers.IO) {
+                            val rangeRequest = Request.Builder()
+                                .url(streamUrl)
+                                .addHeader("Range", "bytes=$start-$end")
+                                .build()
 
-                            launch(Dispatchers.IO) {
-                                val rangeRequest = Request.Builder()
-                                    .url(streamUrl)
-                                    .addHeader("Range", "bytes=$start-$end")
-                                    .build()
+                            client.newCall(rangeRequest).execute().use { response ->
+                                if (!response.isSuccessful) {
+                                    throw IllegalStateException("Chunk download failed: ${response.code}")
+                                }
+                                val body = response.body ?: throw IllegalStateException("Empty body for chunk")
 
-                                client.newCall(rangeRequest).execute().use { response ->
-                                    if (!response.isSuccessful) {
-                                        throw IllegalStateException("Chunk download failed: ${'$'}{response.code}")
-                                    }
-                                    val body = response.body ?: throw IllegalStateException("Empty body for chunk")
+                                java.io.RandomAccessFile(tmpFile, "rw").use { raf ->
+                                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                    var read: Int
+                                    var offset = start
+                                    while (body.byteStream().read(buffer).also { read = it } != -1) {
+                                        if (read <= 0) continue
+                                        raf.seek(offset)
+                                        raf.write(buffer, 0, read)
+                                        offset += read
 
-                                    java.io.RandomAccessFile(tmpFile, "rw").use { raf ->
-                                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                                        var read: Int
-                                        var offset = start
-                                        while (body.byteStream().read(buffer).also { read = it } != -1) {
-                                            if (read <= 0) continue
-                                            raf.seek(offset)
-                                            raf.write(buffer, 0, read)
-                                            offset += read
-
-                                            val totalSoFar = downloaded.addAndGet(read.toLong())
-                                            onProgress((totalSoFar.toDouble() / contentLength.toDouble()).toFloat())
-                                        }
+                                        val totalSoFar = downloaded.addAndGet(read.toLong())
+                                        onProgress((totalSoFar.toDouble() / contentLength.toDouble()).toFloat())
                                     }
                                 }
                             }
                         }
                     }
-
-                    context.contentResolver.openOutputStream(finalTarget.uri)?.use { out ->
-                        java.io.FileInputStream(tmpFile).use { input ->
-                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                            var read: Int
-                            while (input.read(buffer).also { read = it } != -1) {
-                                out.write(buffer, 0, read)
-                            }
-                        }
-                    } ?: throw IllegalStateException("Cannot open output stream for target file")
-
-                    onProgress(1f)
-                } finally {
-                    if (tmpFile.exists()) {
-                        tmpFile.delete()
-                    }
                 }
-
-                finalTarget
             } else {
                 val request = Request.Builder()
                     .url(streamUrl)
@@ -245,11 +231,12 @@ internal suspend fun performYouTubeDownloadInternal(
 
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        throw IllegalStateException("Download failed: ${'$'}{response.code}")
+                        throw IllegalStateException("Download failed: ${response.code}")
                     }
                     val body = response.body ?: throw IllegalStateException("Empty body")
                     val total = body.contentLength().takeIf { it > 0 } ?: -1L
-                    context.contentResolver.openOutputStream(finalTarget.uri)?.use { out ->
+
+                    FileOutputStream(tmpFile).use { out ->
                         body.byteStream().use { input ->
                             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                             var read: Int
@@ -262,12 +249,49 @@ internal suspend fun performYouTubeDownloadInternal(
                                 }
                             }
                         }
-                    } ?: throw IllegalStateException("Cannot open output stream")
+                    }
+                }
+            }
+            true
+        }
+
+        if (!downloadSuccess) return false
+
+        withContext(Dispatchers.IO) {
+            try {
+                TagOptionSingleton.getInstance().isAndroid = true
+                val audioFile = AudioFileIO.read(tmpFile)
+                val tag = audioFile.tagAndConvertOrCreateAndSetDefault
+
+                tag.setField(FieldKey.TITLE, song.title)
+                tag.setField(FieldKey.ARTIST, song.artist)
+
+                if (!song.album.isNullOrBlank()) {
+                    tag.setField(FieldKey.ALBUM, song.album)
                 }
 
-                finalTarget
+                 song.trackNumber?.let { tag.setField(FieldKey.TRACK, it.toString()) }
+                 song.discNumber?.let { tag.setField(FieldKey.DISC_NO, it.toString()) }
+
+                audioFile.commit()
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
+
+        withContext(Dispatchers.IO) {
+            context.contentResolver.openOutputStream(targetFile.uri)?.use { out ->
+                FileInputStream(tmpFile).use { input ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        out.write(buffer, 0, read)
+                    }
+                }
+            } ?: throw IllegalStateException("Cannot open output stream for target file")
+        }
+
+        onProgress(1f)
 
         withContext(Dispatchers.IO) {
             val settings = app.settingsManager
@@ -348,5 +372,7 @@ internal suspend fun performYouTubeDownloadInternal(
         true
     } catch (_: Exception) {
         false
+    } finally {
+        tmpFile?.delete()
     }
 }

@@ -3,24 +3,17 @@ package com.calmapps.calmmusic.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.mudita.mmd.components.buttons.FloatingActionButtonMMD
-import com.mudita.mmd.components.divider.HorizontalDividerMMD
 import com.mudita.mmd.components.lazy.LazyColumnMMD
 import com.mudita.mmd.components.text.TextMMD
 
@@ -39,7 +32,6 @@ data class SongUiModel(
 
 @Composable
 fun SongsScreen(
-    isAuthenticated: Boolean,
     songs: List<SongUiModel>,
     isLoading: Boolean,
     errorMessage: String?,
@@ -47,6 +39,9 @@ fun SongsScreen(
     isSyncInProgress: Boolean,
     onPlaySongClick: (SongUiModel) -> Unit,
     onShuffleClick: () -> Unit,
+    onAddToPlaylistClick: (SongUiModel) -> Unit,
+    onRemoveFromLibraryClick: (SongUiModel) -> Unit,
+    onDeleteClick: (SongUiModel) -> Unit,
     onOpenStreamingSettingsClick: () -> Unit,
     onOpenLocalSettingsClick: () -> Unit,
 ) {
@@ -109,6 +104,11 @@ fun SongsScreen(
                             song = song,
                             isCurrentlyPlaying = song.id == currentSongId,
                             onClick = { onPlaySongClick(song) },
+                            onAddToPlaylist = { onAddToPlaylistClick(song) },
+                            onRemoveFromLibrary = { onRemoveFromLibraryClick(song) },
+                            onDelete = { onDeleteClick(song) },
+                            isDownloaded = false,
+                            isInLibrary = true,
                             showDivider = !isLast,
                         )
                     }

@@ -7,8 +7,8 @@ enum class StreamingProvider {
 
     companion object {
         fun fromStored(value: String?): StreamingProvider = when (value) {
-            "YOUTUBE" -> YOUTUBE
-            else -> APPLE_MUSIC
+            "APPLE_MUSIC" -> APPLE_MUSIC
+            else -> YOUTUBE
         }
 
         fun toStored(provider: StreamingProvider): String = when (provider) {
