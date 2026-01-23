@@ -1,12 +1,14 @@
 package com.calmapps.calmmusic
 
 import android.app.Application
+import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
@@ -558,7 +560,7 @@ class CalmMusicViewModel(
             val controller = localController
             if (controller != null) {
                 viewModelScope.launch {
-                    playYouTubeSongInQueue(song, startIndex, controller)
+                    playYouTubeSongInQueue(song, startIndex, controller, startPositionMs)
                 }
                 playbackCoordinator.localQueueInitialized = true
             }
@@ -680,6 +682,17 @@ class CalmMusicViewModel(
             )
             _playbackState.value = newState
             persistPlaybackSnapshot(newState)
+
+            if (current.sourceType == "LOCAL_FILE") {
+                startPlaybackFromQueue(
+                    queue = newQueue,
+                    startIndex = 0,
+                    isNewQueue = false,
+                    localController = localController,
+                    startPositionMs = state.nowPlayingPositionMs
+                )
+            }
+
         } else {
             if (state.originalPlaybackQueue.isEmpty()) {
                 _playbackState.value = state.copy(isShuffleOn = false)
@@ -706,6 +719,16 @@ class CalmMusicViewModel(
             )
             _playbackState.value = newState
             persistPlaybackSnapshot(newState)
+
+            if (restoredCurrent.sourceType == "LOCAL_FILE") {
+                startPlaybackFromQueue(
+                    queue = restoreQueue,
+                    startIndex = originalIndex,
+                    isNewQueue = false,
+                    localController = localController,
+                    startPositionMs = state.nowPlayingPositionMs
+                )
+            }
         }
     }
 
@@ -771,19 +794,36 @@ class CalmMusicViewModel(
         song: SongUiModel,
         targetIndex: Int,
         localController: MediaController,
+        startPositionMs: Long = 0L,
     ) {
         val videoId = song.id
 
         withContext(Dispatchers.Main) {
+            val metadata = MediaMetadata.Builder()
+                .setTitle(song.title)
+                .setArtist(song.artist)
+                .setAlbumTitle(song.album)
+                .setArtworkUri(Uri.parse("https://i.ytimg.com/vi/$videoId/hqdefault.jpg"))
+                .build()
+
             val mediaItem = MediaItem.Builder()
                 .setMediaId(videoId)
                 .setCustomCacheKey(videoId)
                 .setUri("https://www.youtube.com/watch?v=$videoId")
+                .setMediaMetadata(metadata)
                 .build()
 
             localController.setMediaItem(mediaItem)
             localController.prepare()
+            if (startPositionMs > 0) {
+                localController.seekTo(startPositionMs)
+            }
             localController.playWhenReady = true
+
+            val currentState = _playbackState.value
+            if (targetIndex != currentState.playbackQueueIndex && currentState.currentSongId != song.id) {
+                return@withContext
+            }
 
             val updatedSong = song.copy(
                 sourceType = "YOUTUBE",
@@ -806,7 +846,7 @@ class CalmMusicViewModel(
                 currentSongId = updatedSong.id,
                 nowPlayingSong = updatedSong,
                 nowPlayingDurationMs = updatedSong.durationMillis ?: state.nowPlayingDurationMs,
-                nowPlayingPositionMs = 0L,
+                nowPlayingPositionMs = startPositionMs, // Reflect the actual start pos
                 isPlaybackPlaying = true,
             )
 
@@ -849,45 +889,49 @@ class CalmMusicViewModel(
                     isBuffering = isBufferingNow,
                 )
 
-                // Handle intra-segment transitions (Local -> Local)
                 if (isLocalFile) {
                     val currentLocalIndex = controller.currentMediaItemIndex
-                    if (currentLocalIndex >= 0 && currentLocalIndex != lastLocalQueueIndex) {
+
+                    if (currentLocalIndex >= 0 && lastLocalQueueIndex != null && currentLocalIndex != lastLocalQueueIndex) {
+
+                        val delta = currentLocalIndex - lastLocalQueueIndex!!
+
+                        if (delta > 0) {
+                            val queue = state.playbackQueue
+                            val globalStartIndex = state.playbackQueueIndex ?: 0
+
+                            var foundCount = -1
+                            var targetGlobalIndex = -1
+
+                            for (i in globalStartIndex until queue.size) {
+                                if (queue[i].sourceType == "LOCAL_FILE") {
+                                    foundCount++
+                                }
+                                if (foundCount == delta) {
+                                    targetGlobalIndex = i
+                                    break
+                                }
+                            }
+
+                            if (targetGlobalIndex >= 0) {
+                                lastLocalQueueIndex = currentLocalIndex
+
+                                val newLocalSong = queue[targetGlobalIndex]
+                                newState = newState.copy(
+                                    playbackQueueIndex = targetGlobalIndex,
+                                    currentSongId = newLocalSong.id,
+                                    nowPlayingSong = newLocalSong,
+                                    nowPlayingDurationMs = newLocalSong.durationMillis
+                                        ?: newState.nowPlayingDurationMs,
+                                    nowPlayingPositionMs = 0L,
+                                    isPlaybackPlaying = isPlaying,
+                                )
+                            }
+                        } else {
+                            lastLocalQueueIndex = currentLocalIndex
+                        }
+                    } else if (lastLocalQueueIndex == null) {
                         lastLocalQueueIndex = currentLocalIndex
-
-                        // We are in a segment. Calculate global offset based on current index.
-                        // Since we reload segment at 0 each time we use startPlaybackFromQueue,
-                        // we need to find the next item in the segment.
-
-                        val queue = state.playbackQueue
-                        val globalStartIndex = state.playbackQueueIndex ?: 0
-
-                        // Look ahead from start index to find the Nth local file
-                        var foundCount = -1
-                        var targetGlobalIndex = -1
-
-                        for (i in globalStartIndex until queue.size) {
-                            if (queue[i].sourceType == "LOCAL_FILE") {
-                                foundCount++
-                            }
-                            if (foundCount == currentLocalIndex) {
-                                targetGlobalIndex = i
-                                break
-                            }
-                        }
-
-                        if (targetGlobalIndex >= 0) {
-                            val newLocalSong = queue[targetGlobalIndex]
-                            newState = newState.copy(
-                                playbackQueueIndex = targetGlobalIndex,
-                                currentSongId = newLocalSong.id,
-                                nowPlayingSong = newLocalSong,
-                                nowPlayingDurationMs = newLocalSong.durationMillis
-                                    ?: newState.nowPlayingDurationMs,
-                                nowPlayingPositionMs = 0L,
-                                isPlaybackPlaying = isPlaying,
-                            )
-                        }
                     }
                 }
 

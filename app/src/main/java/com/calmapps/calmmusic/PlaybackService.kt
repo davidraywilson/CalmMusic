@@ -164,11 +164,9 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        mediaSession?.player?.let { player ->
-            if (!player.playWhenReady || player.mediaItemCount == 0) {
-                stopSelf()
-            }
-        }
+        mediaSession?.player?.stop()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =

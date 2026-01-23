@@ -117,7 +117,6 @@ class CalmMusic : Application(), DefaultLifecycleObserver {
         settingsManager = CalmMusicSettingsManager(this)
         youTubeDownloadManager = YouTubeDownloadManager(
             app = this,
-            settingsManager = settingsManager,
             appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO),
         )
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)

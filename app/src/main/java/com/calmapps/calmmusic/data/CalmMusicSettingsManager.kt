@@ -24,7 +24,6 @@ class CalmMusicSettingsManager(context: Context) {
     private val _completeAlbumsWithYouTube = MutableStateFlow(getCompleteAlbumsWithYouTubeSync())
     val completeAlbumsWithYouTube: StateFlow<Boolean> = _completeAlbumsWithYouTube.asStateFlow()
 
-    // Apple Music sync metadata (not exposed as flows for now; simple perf knob).
     fun getLastAppleMusicSyncMillis(): Long {
         return prefs.getLong(KEY_LAST_APPLE_MUSIC_SYNC_MILLIS, 0L)
     }
@@ -33,7 +32,6 @@ class CalmMusicSettingsManager(context: Context) {
         prefs.edit { putLong(KEY_LAST_APPLE_MUSIC_SYNC_MILLIS, value) }
     }
 
-    // Local library scan metadata, used to prioritize recently changed files.
     fun getLastLocalLibraryScanMillis(): Long {
         return prefs.getLong(KEY_LAST_LOCAL_LIBRARY_SCAN_MILLIS, 0L)
     }
@@ -71,7 +69,6 @@ class CalmMusicSettingsManager(context: Context) {
         return prefs.getStringSet(KEY_LOCAL_MUSIC_FOLDERS, emptySet()) ?: emptySet()
     }
 
-    // Streaming provider
     private fun getStreamingProviderSync(): StreamingProvider {
         val raw = prefs.getString(KEY_STREAMING_PROVIDER, null)
         return StreamingProvider.fromStored(raw)
@@ -91,17 +88,6 @@ class CalmMusicSettingsManager(context: Context) {
         _completeAlbumsWithYouTube.value = enabled
     }
 
-    // Dedicated CalmMusic download folder (SAF tree URI for the CalmMusic directory)
-    fun getDownloadFolderUri(): String? {
-        return prefs.getString(KEY_DOWNLOAD_FOLDER_URI, null)
-    }
-
-    fun setDownloadFolderUri(uri: String?) {
-        prefs.edit {
-            if (uri == null) remove(KEY_DOWNLOAD_FOLDER_URI) else putString(KEY_DOWNLOAD_FOLDER_URI, uri)
-        }
-    }
-
     // Permissions onboarding
     fun hasCompletedPermissionsOnboarding(): Boolean {
         return prefs.getBoolean(KEY_HAS_COMPLETED_PERMISSIONS_ONBOARDING, false)
@@ -119,7 +105,6 @@ class CalmMusicSettingsManager(context: Context) {
         private const val KEY_LAST_LOCAL_LIBRARY_SCAN_MILLIS = "last_local_library_scan_millis"
         private const val KEY_HAS_COMPLETED_PERMISSIONS_ONBOARDING = "has_completed_permissions_onboarding"
         private const val KEY_STREAMING_PROVIDER = "streaming_provider"
-        private const val KEY_DOWNLOAD_FOLDER_URI = "download_folder_uri"
         private const val KEY_COMPLETE_ALBUMS_WITH_YOUTUBE = "complete_albums_with_youtube"
     }
 }

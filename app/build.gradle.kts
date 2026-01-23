@@ -112,4 +112,5 @@ dependencies {
 
     // meta tag library
     implementation("net.jthink:jaudiotagger:3.0.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4") // Or your compatible version
 }

@@ -54,20 +54,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import androidx.documentfile.provider.DocumentFile
 import androidx.navigation.NavDestination
 import androidx.navigation.NavGraphBuilder
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.util.UnstableApi
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.calmapps.calmmusic.data.StreamingProvider
 import com.calmapps.calmmusic.overlay.SystemOverlayService
 import com.calmapps.calmmusic.ui.AlbumDetailsScreen
@@ -176,8 +178,6 @@ fun CalmMusic(app: CalmMusic) {
     val downloadStatuses by app.youTubeDownloadManager.downloads.collectAsState()
 
     var localMediaController by remember { mutableStateOf<MediaController?>(null) }
-
-    // Fix: Correctly map download IDs (UUIDs) to song IDs (Video IDs)
     var lastCompletedDownloadUUIDs by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     LaunchedEffect(downloadStatuses) {
@@ -214,62 +214,6 @@ fun CalmMusic(app: CalmMusic) {
     val localMusicFolders = localMusicFoldersState.value
     val completeAlbumsWithYouTubeState = settingsManager.completeAlbumsWithYouTube.collectAsState()
     val completeAlbumsWithYouTube = completeAlbumsWithYouTubeState.value
-
-    // Explicitly track download folder state for immediate UI updates
-    var currentDownloadFolder by remember { mutableStateOf(settingsManager.getDownloadFolderUri()) }
-
-    var pendingDownloadSong by remember { mutableStateOf<SongUiModel?>(null) }
-    val downloadFolderPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree(),
-    ) { uri ->
-        val songToDownload = pendingDownloadSong
-        pendingDownloadSong = null
-        if (uri == null) {
-            return@rememberLauncherForActivityResult
-        }
-
-        val context = appContext
-        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-        try {
-            context.contentResolver.takePersistableUriPermission(uri, flags)
-        } catch (_: SecurityException) {
-        }
-
-        val baseDir = DocumentFile.fromTreeUri(context, uri)
-        if (baseDir == null) {
-            libraryScope.launch {
-                snackbarHostState.showSnackbar(
-                    message = "Cannot access selected folder",
-                    withDismissAction = false,
-                    duration = SnackbarDurationMMD.Short,
-                )
-            }
-            return@rememberLauncherForActivityResult
-        }
-
-        val calmMusicDir = baseDir.findFile("CalmMusic")?.takeIf { it.isDirectory }
-            ?: baseDir.createDirectory("CalmMusic")
-            ?: baseDir
-
-        val calmUriString = calmMusicDir.uri.toString()
-        settingsManager.setDownloadFolderUri(calmUriString)
-        settingsManager.addLocalMusicFolder(calmUriString)
-
-        // Update state
-        currentDownloadFolder = calmUriString
-
-        if (songToDownload != null) {
-            app.youTubeDownloadManager.enqueueDownload(songToDownload)
-            libraryScope.launch {
-                snackbarHostState.showSnackbar(
-                    message = "Download started",
-                    withDismissAction = false,
-                    duration = SnackbarDurationMMD.Short,
-                )
-            }
-        }
-    }
-
     var hasOverlayPermission by rememberSaveable { mutableStateOf(Settings.canDrawOverlays(context)) }
     var hasBatteryOptimizationExemption by rememberSaveable { mutableStateOf(false) }
     var hasCompletedPermissionsOnboarding by rememberSaveable {
@@ -679,7 +623,10 @@ fun CalmMusic(app: CalmMusic) {
             playlistEditSelectionIds.clear()
             playlistEditSelectionCount = 0
         }
-        if (currentDestination?.route != Screen.PlaylistDetails.route && isPlaylistDetailsEditMode) {
+        val isPlaylistDetails = currentDestination?.route == Screen.PlaylistDetails.route ||
+                currentDestination?.route?.startsWith("playlistDetails/") == true
+
+        if (!isPlaylistDetails && isPlaylistDetailsEditMode) {
             isPlaylistDetailsEditMode = false
             playlistDetailsSelectionIds.clear()
             playlistDetailsSelectionCount = 0
@@ -809,7 +756,7 @@ fun CalmMusic(app: CalmMusic) {
                 isInEditMode = isPlaylistsEditMode,
                 onPlaylistClick = { playlist: PlaylistUiModel ->
                     selectedPlaylist = playlist
-                    navController.navigate(Screen.PlaylistDetails.route) {
+                    navController.navigate("${Screen.PlaylistDetails.route}/${playlist.id}") {
                         launchSingleTop = true
                     }
                 },
@@ -826,9 +773,24 @@ fun CalmMusic(app: CalmMusic) {
                 },
             )
         }
-        composable(Screen.PlaylistDetails.route) {
+
+        composable(
+            route = "${Screen.PlaylistDetails.route}/{playlistId}",
+            arguments = listOf(navArgument("playlistId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val playlistId = backStackEntry.arguments?.getString("playlistId")
+
+            LaunchedEffect(playlistId, libraryPlaylists) {
+                if (playlistId != null && (selectedPlaylist == null || selectedPlaylist?.id != playlistId)) {
+                    val found = libraryPlaylists.find { it.id == playlistId }
+                    if (found != null) {
+                        selectedPlaylist = found
+                    }
+                }
+            }
+
             PlaylistDetailsScreen(
-                playlistId = selectedPlaylist?.id,
+                playlistId = playlistId,
                 playbackViewModel = viewModel,
                 playlistsViewModel = playlistsViewModel,
                 isInEditMode = isPlaylistDetailsEditMode,
@@ -913,29 +875,20 @@ fun CalmMusic(app: CalmMusic) {
                             libraryPlaylists = playlists
 
                             val finalPlaylistId = result.playlistId
-                            if (editingPlaylist != null) {
-                                val targetPlaylist = libraryPlaylists.firstOrNull { it.id == finalPlaylistId }
-                                    ?: editingPlaylist.copy(name = trimmed)
-                                selectedPlaylist = targetPlaylist
-                                navigatedToDetails = true
-                                navController.navigate(Screen.PlaylistDetails.route) {
-                                    popUpTo(Screen.Playlists.route) { saveState = true }
-                                    launchSingleTop = true
-                                }
-                            } else {
-                                val targetPlaylist = libraryPlaylists.firstOrNull { it.id == finalPlaylistId }
-                                    ?: PlaylistUiModel(
-                                        id = finalPlaylistId,
-                                        name = trimmed,
-                                        description = null,
-                                        songCount = result.songCount,
-                                    )
-                                selectedPlaylist = targetPlaylist
-                                navigatedToDetails = true
-                                navController.navigate(Screen.PlaylistDetails.route) {
-                                    popUpTo(Screen.Playlists.route) { saveState = true }
-                                    launchSingleTop = true
-                                }
+                            val targetPlaylist = libraryPlaylists.firstOrNull { it.id == finalPlaylistId }
+                                ?: PlaylistUiModel(
+                                    id = finalPlaylistId,
+                                    name = trimmed,
+                                    description = null,
+                                    songCount = result.songCount,
+                                )
+
+                            selectedPlaylist = targetPlaylist
+                            navigatedToDetails = true
+
+                            navController.navigate("${Screen.PlaylistDetails.route}/$finalPlaylistId") {
+                                popUpTo(Screen.Playlists.route) { saveState = true }
+                                launchSingleTop = true
                             }
                         } catch (_: Exception) {
                             shouldPopBack = true
@@ -1256,20 +1209,13 @@ fun CalmMusic(app: CalmMusic) {
                     )
                 }
 
-                // New "Downloads" Screen
                 composable(Screen.Downloads.route) {
+                    val downloads by app.youTubeDownloadManager.downloads.collectAsStateWithLifecycle()
+
                     DownloadsScreen(
-                        downloads = downloadStatuses,
-                        currentDownloadFolder = currentDownloadFolder ?: "",
-                        onChangeDownloadFolderClick = {
-                            downloadFolderPickerLauncher.launch(null)
-                        },
-                        onCancelDownloadClick = { id ->
-                            app.youTubeDownloadManager.cancelDownload(id)
-                        },
-                        onClearFinishedDownloadsClick = {
-                            app.youTubeDownloadManager.clearFinishedDownloads()
-                        },
+                        downloads = downloads,
+                        onCancelDownload = { id -> app.youTubeDownloadManager.cancelDownload(id) },
+                        onClearFinished = { app.youTubeDownloadManager.clearFinishedDownloads() }
                     )
                 }
 
@@ -1439,19 +1385,13 @@ fun CalmMusic(app: CalmMusic) {
                 canDownload = (streamingProvider == StreamingProvider.YOUTUBE && song.sourceType == "YOUTUBE"),
                 isDownloadInProgress = downloadStatuses.any { it.songId == song.id && (it.state == YouTubeDownloadStatus.State.PENDING || it.state == YouTubeDownloadStatus.State.IN_PROGRESS) },
                 onDownloadClick = {
-                    val existingDownloadFolder = settingsManager.getDownloadFolderUri()
-                    if (existingDownloadFolder == null) {
-                        pendingDownloadSong = song
-                        downloadFolderPickerLauncher.launch(null)
-                    } else {
-                        app.youTubeDownloadManager.enqueueDownload(song)
-                        libraryScope.launch {
-                            snackbarHostState.showSnackbar(
-                                message = "Download started",
-                                withDismissAction = false,
-                                duration = SnackbarDurationMMD.Short,
-                            )
-                        }
+                    app.youTubeDownloadManager.enqueueDownload(song)
+                    libraryScope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = "Download started",
+                            withDismissAction = false,
+                            duration = SnackbarDurationMMD.Short,
+                        )
                     }
                 },
                 onCancelDownloadClick = {
@@ -1844,19 +1784,21 @@ fun CalmMusic(app: CalmMusic) {
 
 @Composable
 fun getAppBarTitle(currentDestination: NavDestination?): String {
-    return when (currentDestination?.route) {
-        Screen.Playlists.route -> "Playlists"
-        Screen.Songs.route -> "Songs"
-        Screen.Albums.route -> "Albums"
-        Screen.AlbumDetails.route -> "Album"
-        Screen.Artists.route -> "Artists"
-        Screen.ArtistDetails.route -> "Artist"
-        Screen.Search.route -> "Search"
-        Screen.More.route -> "More"
-        Screen.Downloads.route -> "Downloads"
-        Screen.Settings.route -> "Settings"
-        Screen.PlaylistEdit.route -> "Edit Playlist"
-        Screen.PlaylistAddSongs.route -> "Add Songs"
+    return when {
+        currentDestination?.route == Screen.Playlists.route -> "Playlists"
+        currentDestination?.route == Screen.Songs.route -> "Songs"
+        currentDestination?.route == Screen.Albums.route -> "Albums"
+        currentDestination?.route == Screen.AlbumDetails.route -> "Album"
+        currentDestination?.route == Screen.Artists.route -> "Artists"
+        currentDestination?.route == Screen.ArtistDetails.route -> "Artist"
+        currentDestination?.route == Screen.Search.route -> "Search"
+        currentDestination?.route == Screen.More.route -> "More"
+        currentDestination?.route == Screen.Downloads.route -> "Downloads"
+        currentDestination?.route == Screen.Settings.route -> "Settings"
+        currentDestination?.route == Screen.PlaylistEdit.route -> "Edit Playlist"
+        currentDestination?.route == Screen.PlaylistAddSongs.route -> "Add Songs"
+        currentDestination?.route == Screen.PlaylistDetails.route -> "Playlist"
+        currentDestination?.route?.startsWith("playlistDetails/") == true -> "Playlist"
         else -> ""
     }
 }

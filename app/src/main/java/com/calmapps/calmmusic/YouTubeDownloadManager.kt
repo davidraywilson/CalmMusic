@@ -1,15 +1,14 @@
 package com.calmapps.calmmusic
 
 import android.content.Context
+import android.os.Environment
 import androidx.annotation.OptIn
-import androidx.documentfile.provider.DocumentFile
 import androidx.media3.common.util.UnstableApi
-import com.calmapps.calmmusic.data.CalmMusicSettingsManager
+import com.calmapps.calmmusic.data.AlbumEntity
+import com.calmapps.calmmusic.data.ArtistEntity
 import com.calmapps.calmmusic.data.CalmMusicDatabase
 import com.calmapps.calmmusic.data.LocalMusicScanner
 import com.calmapps.calmmusic.data.SongEntity
-import com.calmapps.calmmusic.data.ArtistEntity
-import com.calmapps.calmmusic.data.AlbumEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,18 +19,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.UUID
-import java.io.File
-import java.io.FileOutputStream
-import java.io.FileInputStream
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import org.jaudiotagger.tag.TagOptionSingleton
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.RandomAccessFile
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Central manager for YouTube downloads so that download state (including progress)
- * is owned outside of any single composable and can be surfaced in multiple places
- * (Now Playing, Settings, etc.).
+ * Central manager for YouTube downloads.
+ * * FEATURES:
+ * 1. App-Specific Storage: Saves directly to /Android/data/.../files/Music (No SAF permissions).
+ * 2. Chunked Downloading: Uses concurrent byte-range requests for faster speeds.
+ * 3. Auto-Library Update: Immediately inserts the song/artist/album into the Room database.
  */
 data class YouTubeDownloadStatus(
     val id: String,
@@ -47,7 +50,6 @@ data class YouTubeDownloadStatus(
 
 class YouTubeDownloadManager(
     private val app: CalmMusic,
-    private val settingsManager: CalmMusicSettingsManager,
     private val appScope: CoroutineScope,
 ) {
     private val client = OkHttpClient()
@@ -58,8 +60,6 @@ class YouTubeDownloadManager(
     private val jobsById = mutableMapOf<String, Job>()
 
     fun enqueueDownload(song: com.calmapps.calmmusic.ui.SongUiModel) {
-        val downloadFolderUri = settingsManager.getDownloadFolderUri() ?: return
-
         val id = UUID.randomUUID().toString()
         val initial = YouTubeDownloadStatus(
             id = id,
@@ -73,26 +73,22 @@ class YouTubeDownloadManager(
 
         val job = appScope.launch {
             val context = app.applicationContext
-            val folderUri = try {
-                android.net.Uri.parse(downloadFolderUri)
-            } catch (_: Exception) {
-                updateDownload(id) { it.copy(state = YouTubeDownloadStatus.State.FAILED, errorMessage = "Invalid download folder") }
-                return@launch
-            }
-            val baseDir = DocumentFile.fromTreeUri(context, folderUri)
-            if (baseDir == null) {
-                updateDownload(id) { it.copy(state = YouTubeDownloadStatus.State.FAILED, errorMessage = "Cannot access download folder") }
+
+            val musicDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)
+
+            if (musicDir == null) {
+                updateDownload(id) { it.copy(state = YouTubeDownloadStatus.State.FAILED, errorMessage = "Storage inaccessible") }
                 return@launch
             }
 
-            val downloadsDir = baseDir
+            if (!musicDir.exists()) musicDir.mkdirs()
 
             updateDownload(id) { it.copy(state = YouTubeDownloadStatus.State.IN_PROGRESS) }
 
             val ok = performYouTubeDownloadInternal(
                 app = app,
                 song = song,
-                targetDir = downloadsDir,
+                targetDir = musicDir,
                 context = context,
                 client = client,
                 onProgress = { progress ->
@@ -135,15 +131,12 @@ class YouTubeDownloadManager(
 
 /**
  * Shared internal implementation of the YouTube download pipeline.
- *
- * MODIFIED: This now downloads to a temporary file first, applies metadata tags using Jaudiotagger,
- * and then copies the tagged file to the final user-selected destination.
  */
 @OptIn(UnstableApi::class)
 internal suspend fun performYouTubeDownloadInternal(
     app: CalmMusic,
     song: com.calmapps.calmmusic.ui.SongUiModel,
-    targetDir: DocumentFile,
+    targetDir: File,
     context: Context,
     client: OkHttpClient,
     onProgress: (Float) -> Unit,
@@ -156,13 +149,14 @@ internal suspend fun performYouTubeDownloadInternal(
             app.youTubeStreamResolver.getDownloadAudioUrl(videoId)
         }
 
-        val targetFile = withContext(Dispatchers.IO) {
-            val safeTitle = (song.title.ifBlank { videoId })
-                .replace(Regex("""[\\\\/:*?\"<>|]"""), "_")
-            val fileName = "$safeTitle.m4a"
-            targetDir.findFile(fileName)
-                ?: targetDir.createFile("audio/mp4", fileName)
-        } ?: throw IllegalStateException("Could not create target file")
+        val safeTitle = (song.title.ifBlank { videoId })
+            .replace(Regex("""[\\\\/:*?\"<>|]"""), "_")
+        val fileName = "$safeTitle.m4a"
+        val targetFile = File(targetDir, fileName)
+
+        if (targetFile.exists()) {
+            targetFile.delete()
+        }
 
         tmpFile = withContext(Dispatchers.IO) {
             File.createTempFile("yt-$videoId-", ".m4a", context.cacheDir)
@@ -186,7 +180,7 @@ internal suspend fun performYouTubeDownloadInternal(
             if (contentLength > 0L && supportsRanges) {
                 val chunkCount = 4.coerceAtMost(((contentLength / (5L * 1024 * 1024)).toInt() + 1).coerceAtLeast(2))
                 val chunkSize = contentLength / chunkCount
-                val downloaded = java.util.concurrent.atomic.AtomicLong(0L)
+                val downloaded = AtomicLong(0L)
 
                 kotlinx.coroutines.coroutineScope {
                     repeat(chunkCount) { index ->
@@ -206,14 +200,17 @@ internal suspend fun performYouTubeDownloadInternal(
                                 }
                                 val body = response.body ?: throw IllegalStateException("Empty body for chunk")
 
-                                java.io.RandomAccessFile(tmpFile, "rw").use { raf ->
-                                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                RandomAccessFile(tmpFile, "rw").use { raf ->
+                                    val buffer = ByteArray(8 * 1024)
                                     var read: Int
                                     var offset = start
                                     while (body.byteStream().read(buffer).also { read = it } != -1) {
                                         if (read <= 0) continue
-                                        raf.seek(offset)
-                                        raf.write(buffer, 0, read)
+
+                                        synchronized(raf) {
+                                            raf.seek(offset)
+                                            raf.write(buffer, 0, read)
+                                        }
                                         offset += read
 
                                         val totalSoFar = downloaded.addAndGet(read.toLong())
@@ -238,7 +235,7 @@ internal suspend fun performYouTubeDownloadInternal(
 
                     FileOutputStream(tmpFile).use { out ->
                         body.byteStream().use { input ->
-                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            val buffer = ByteArray(8 * 1024)
                             var read: Int
                             var readSoFar = 0L
                             while (input.read(buffer).also { read = it } != -1) {
@@ -270,8 +267,8 @@ internal suspend fun performYouTubeDownloadInternal(
                     tag.setField(FieldKey.ALBUM, song.album)
                 }
 
-                 song.trackNumber?.let { tag.setField(FieldKey.TRACK, it.toString()) }
-                 song.discNumber?.let { tag.setField(FieldKey.DISC_NO, it.toString()) }
+                song.trackNumber?.let { tag.setField(FieldKey.TRACK, it.toString()) }
+                song.discNumber?.let { tag.setField(FieldKey.DISC_NO, it.toString()) }
 
                 audioFile.commit()
             } catch (e: Exception) {
@@ -280,15 +277,11 @@ internal suspend fun performYouTubeDownloadInternal(
         }
 
         withContext(Dispatchers.IO) {
-            context.contentResolver.openOutputStream(targetFile.uri)?.use { out ->
-                FileInputStream(tmpFile).use { input ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    var read: Int
-                    while (input.read(buffer).also { read = it } != -1) {
-                        out.write(buffer, 0, read)
-                    }
+            FileInputStream(tmpFile).use { input ->
+                FileOutputStream(targetFile).use { output ->
+                    input.copyTo(output)
                 }
-            } ?: throw IllegalStateException("Cannot open output stream for target file")
+            }
         }
 
         onProgress(1f)
@@ -304,7 +297,7 @@ internal suspend fun performYouTubeDownloadInternal(
             val artistDao = database.artistDao()
             val playlistDao = database.playlistDao()
 
-            val fileUri = targetFile.uri
+            val fileUri = android.net.Uri.fromFile(targetFile)
             val fileUriString = fileUri.toString()
             val localLastModified = targetFile.lastModified()
             val localSize = targetFile.length()
@@ -329,7 +322,7 @@ internal suspend fun performYouTubeDownloadInternal(
             val localSongEntity = LocalMusicScanner.buildSongEntityFromFile(
                 context = context,
                 uri = fileUri,
-                name = targetFile.name ?: (song.title.ifBlank { videoId } + ".m4a"),
+                name = targetFile.name,
                 lastModified = localLastModified,
                 fileSize = localSize,
                 existing = existingStreamingEntity,
@@ -344,7 +337,7 @@ internal suspend fun performYouTubeDownloadInternal(
                 val artistEntity = ArtistEntity(
                     id = artistId,
                     name = displayArtistName,
-                    sourceType = "LOCAL_FILE",
+                    sourceType = "LOCAL_FILE"
                 )
                 artistDao.upsertAll(listOf(artistEntity))
             }
@@ -362,11 +355,10 @@ internal suspend fun performYouTubeDownloadInternal(
 
             songDao.upsertAll(listOf(localSongEntity))
             playlistDao.updateSongIdForAllPlaylists(oldSongId = videoId, newSongId = fileUriString)
-            songDao.deleteByIds(listOf(videoId))
-        }
 
-        // After database updates, refresh library for the in-memory view.
-        withContext(Dispatchers.Main) {
+            if (localSongEntity.id != videoId) {
+                songDao.deleteByIds(listOf(videoId))
+            }
         }
 
         true
