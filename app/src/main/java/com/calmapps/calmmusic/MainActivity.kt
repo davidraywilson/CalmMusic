@@ -331,6 +331,7 @@ fun CalmMusic(app: CalmMusic) {
     var searchQuery by remember { mutableStateOf("") }
     var searchSongs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
     var searchAlbums by remember { mutableStateOf<List<AlbumUiModel>>(emptyList()) }
+    var searchLocalSongs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
     var searchSelectedTab by remember { mutableStateOf(0) }
     var isSearching by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
@@ -361,6 +362,14 @@ fun CalmMusic(app: CalmMusic) {
 
     fun performSearch() {
         if (searchQuery.isBlank()) return
+
+        val query = searchQuery.trim()
+        searchLocalSongs = librarySongs.filter { song ->
+            song.title.contains(query, ignoreCase = true) ||
+                    song.artist.contains(query, ignoreCase = true) ||
+                    (song.album?.contains(query, ignoreCase = true) == true)
+        }
+
         if (!isStreamingAvailable) return
         if (isSearching) return
 
@@ -1128,24 +1137,32 @@ fun CalmMusic(app: CalmMusic) {
                         errorMessage = searchError,
                         songs = searchSongs,
                         albums = searchAlbums,
+                        localSongs = searchLocalSongs,
                         selectedTab = searchSelectedTab,
                         onSelectedTabChange = { searchSelectedTab = it },
                         onPlaySongClick = { song: SongUiModel ->
-                            when (streamingProvider) {
-                                StreamingProvider.APPLE_MUSIC -> {
-                                    viewModel.startPlaybackFromQueue(
-                                        queue = listOf(song),
-                                        startIndex = 0,
-                                        isNewQueue = true,
-                                        localController = localMediaController,
-                                    )
-                                    showNowPlaying = true
-                                }
-                                StreamingProvider.YOUTUBE -> {
-                                    val songs = searchSongs
-                                    val index = songs.indexOfFirst { it.id == song.id }
-                                    val startIndex = if (index >= 0) index else 0
-                                    startPlaybackFromQueue(songs, startIndex)
+                            if (song.sourceType == "LOCAL_FILE") {
+                                val index = searchLocalSongs.indexOfFirst { it.id == song.id }
+                                val startIndex = if (index >= 0) index else 0
+                                startPlaybackFromQueue(searchLocalSongs, startIndex)
+                            } else {
+                                when (streamingProvider) {
+                                    StreamingProvider.APPLE_MUSIC -> {
+                                        viewModel.startPlaybackFromQueue(
+                                            queue = listOf(song),
+                                            startIndex = 0,
+                                            isNewQueue = true,
+                                            localController = localMediaController,
+                                        )
+                                        showNowPlaying = true
+                                    }
+
+                                    StreamingProvider.YOUTUBE -> {
+                                        val songs = searchSongs
+                                        val index = songs.indexOfFirst { it.id == song.id }
+                                        val startIndex = if (index >= 0) index else 0
+                                        startPlaybackFromQueue(songs, startIndex)
+                                    }
                                 }
                             }
                         },

@@ -27,6 +27,7 @@ fun SearchScreen(
     errorMessage: String?,
     songs: List<SongUiModel>,
     albums: List<AlbumUiModel>,
+    localSongs: List<SongUiModel>,
     selectedTab: Int,
     onSelectedTabChange: (Int) -> Unit,
     onPlaySongClick: (SongUiModel) -> Unit,
@@ -65,6 +66,17 @@ fun SearchScreen(
                                 text = "Albums",
                                 fontSize = 16.sp,
                                 fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        },
+                    )
+                    TabMMD(
+                        selected = selectedTab == 2,
+                        onClick = { onSelectedTabChange(2) },
+                        text = {
+                            TextMMD(
+                                text = "Local",
+                                fontSize = 16.sp,
+                                fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal,
                             )
                         },
                     )
@@ -130,6 +142,27 @@ fun SearchScreen(
                             ) {
                                 item {
                                     TextMMD(text = "No albums. Try a different search.")
+                                }
+                            }
+                        }
+
+                        2 -> {
+                            if (localSongs.isNotEmpty()) {
+                                items(localSongs.size) { index ->
+                                    val song = localSongs[index]
+                                    SongItem(
+                                        song = song,
+                                        isCurrentlyPlaying = false,
+                                        onClick = { onPlaySongClick(song) },
+                                        showDivider = song != localSongs.lastOrNull(),
+                                        isInLibrary = true,
+                                    )
+                                }
+                            }
+
+                            if (!isSearching && localSongs.isEmpty()) {
+                                item {
+                                    TextMMD(text = "No local songs found.")
                                 }
                             }
                         }
