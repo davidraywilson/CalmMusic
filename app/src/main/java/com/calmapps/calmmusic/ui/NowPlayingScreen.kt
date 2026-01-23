@@ -9,6 +9,10 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.LibraryAdd
+import androidx.compose.material.icons.outlined.LibraryAddCheck
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.PlaylistAdd
@@ -27,7 +31,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -66,6 +69,14 @@ fun NowPlayingScreen(
     onBackClick: () -> Unit = {},
     isVideo: Boolean = false,
     player: Player? = null,
+    canDownload: Boolean = false,
+    isDownloadInProgress: Boolean = false,
+    onDownloadClick: () -> Unit = {},
+    onCancelDownloadClick: () -> Unit = {},
+    canAddToLibrary: Boolean = false,
+    onAddToLibraryClick: () -> Unit = {},
+    isInLibrary: Boolean = false,
+    sourceType: String? = null,
 ) {
     Column(
         modifier = Modifier
@@ -260,10 +271,38 @@ fun NowPlayingScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Bottom row for secondary actions (e.g. shuffle, repeat, add to playlist)
+        // Bottom row for secondary actions (e.g. shuffle, repeat, add to playlist / library)
         Row(
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            if (canAddToLibrary) {
+                IconButton(onClick = onAddToLibraryClick) {
+                    Icon(
+                        imageVector = Icons.Outlined.LibraryAdd,
+                        contentDescription = "Add to library",
+                    )
+                }
+            }
+
+            if (canDownload) {
+                if (isDownloadInProgress) {
+                    IconButton(onClick = onCancelDownloadClick) {
+                        CircularProgressIndicatorMMD(
+                            modifier = Modifier.size(24.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                } else {
+                    IconButton(onClick = onDownloadClick) {
+                        Icon(
+                            imageVector = Icons.Outlined.Download,
+                            contentDescription = "Download",
+                        )
+                    }
+                }
+            }
+
             IconButton(onClick = onAddToPlaylistClick) {
                 Icon(
                     imageVector = Icons.Outlined.PlaylistAdd,
@@ -315,6 +354,42 @@ fun NowPlayingScreen(
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            val isLocal = sourceType == "LOCAL_FILE"
+            if (!isLocal) {
+                Box(
+                    modifier = Modifier
+                        .background(
+                            color = MaterialTheme.colorScheme.onSurface,
+                            shape = CircleShape
+                        )
+                        .padding(12.dp, 4.dp)
+                ) {
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.Cloud,
+                            contentDescription = "Streaming source",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.surface
+                        )
+
+                        if (isInLibrary) {
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Icon(
+                                imageVector = Icons.Outlined.LibraryAddCheck,
+                                contentDescription = "In Library",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.surface
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -345,5 +420,13 @@ private fun NowPlayingScreenPreview() {
         onAddToPlaylistClick = {},
         isVideo = false,
         player = null,
+        canDownload = false,
+        isDownloadInProgress = false,
+        onDownloadClick = {},
+        onCancelDownloadClick = {},
+        canAddToLibrary = false,
+        onAddToLibraryClick = {},
+        isInLibrary = true,
+        sourceType = "YOUTUBE"
     )
 }

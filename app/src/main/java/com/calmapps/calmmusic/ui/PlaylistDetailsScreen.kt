@@ -53,6 +53,9 @@ fun PlaylistDetailsScreen(
     onPlaySongClick: (SongUiModel, List<SongUiModel>) -> Unit,
     onAddSongsClick: () -> Unit,
     onShuffleClick: (List<SongUiModel>) -> Unit,
+    onAddToPlaylistClick: (SongUiModel) -> Unit,
+    onRemoveFromLibraryClick: (SongUiModel) -> Unit,
+    onDeleteClick: (SongUiModel) -> Unit,
 ) {
     // Local State
     var songs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
@@ -95,9 +98,9 @@ fun PlaylistDetailsScreen(
             currentList.add(toIndex, item)
             songs = currentList
 
-                    scope.launch {
-                        try {
-                            playlistsViewModel.updatePlaylistOrder(playlistId, currentList)
+            scope.launch {
+                try {
+                    playlistsViewModel.updatePlaylistOrder(playlistId, currentList)
                 } catch (e: Exception) {
                     errorMessage = "Failed to save order"
                 }
@@ -183,6 +186,10 @@ fun PlaylistDetailsScreen(
                                 song = song,
                                 isCurrentlyPlaying = song.id == currentSongId,
                                 onClick = { onPlaySongClick(song, songs) },
+                                onAddToPlaylist = { onAddToPlaylistClick(song) },
+                                onRemoveFromLibrary = { onRemoveFromLibraryClick(song) },
+                                onDelete = { onDeleteClick(song) },
+                                isInLibrary = true,
                                 showDivider = !isLast,
                             )
                         }

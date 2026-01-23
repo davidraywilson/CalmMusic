@@ -7,9 +7,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Text
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -17,17 +15,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mudita.mmd.components.lazy.LazyColumnMMD
+import com.mudita.mmd.components.tabs.PrimaryTabRowMMD
+import com.mudita.mmd.components.tabs.TabMMD
 import com.mudita.mmd.components.text.TextMMD
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     isAuthenticated: Boolean,
     isSearching: Boolean,
     errorMessage: String?,
     songs: List<SongUiModel>,
-    playlists: List<PlaylistUiModel>,
+    albums: List<AlbumUiModel>,
+    selectedTab: Int,
+    onSelectedTabChange: (Int) -> Unit,
     onPlaySongClick: (SongUiModel) -> Unit,
-    onPlaylistClick: (PlaylistUiModel) -> Unit,
+    onAlbumClick: (AlbumUiModel) -> Unit,
+    librarySongIds: Set<String> = emptySet(),
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         if (!isAuthenticated) {
@@ -36,12 +40,36 @@ fun SearchScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                TextMMD(text = "Connect Apple Music to search songs and playlists")
+                TextMMD(text = "Connect your streaming source to search music")
                 Spacer(modifier = Modifier.height(16.dp))
-                // The actual connect button lives in the header or other screens; here we just inform.
             }
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
+                PrimaryTabRowMMD(selectedTabIndex = selectedTab) {
+                    TabMMD(
+                        selected = selectedTab == 0,
+                        onClick = { onSelectedTabChange(0) },
+                        text = {
+                            TextMMD(
+                                text = "Songs",
+                                fontSize = 16.sp,
+                                fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        },
+                    )
+                    TabMMD(
+                        selected = selectedTab == 1,
+                        onClick = { onSelectedTabChange(1) },
+                        text = {
+                            TextMMD(
+                                text = "Albums",
+                                fontSize = 16.sp,
+                                fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        },
+                    )
+                }
+
                 LazyColumnMMD(contentPadding = PaddingValues(16.dp)) {
                     if (isSearching) {
                         item {
@@ -57,52 +85,53 @@ fun SearchScreen(
                         }
                     }
 
-                    if (songs.isNotEmpty()) {
-                        item {
-                            TextMMD(
-                                text = "Songs (${songs.size})",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                        }
-                        items(songs) { song ->
-                            SongItem(
-                                song = song,
-                                isCurrentlyPlaying = false,
-                                onClick = { onPlaySongClick(song) },
-                                showDivider = song != songs.lastOrNull(),
-                            )
-                        }
-                    }
+                    when (selectedTab) {
+                        0 -> {
+                            if (songs.isNotEmpty()) {
+                                items(songs.size) { index ->
+                                    val song = songs[index]
+                                    SongItem(
+                                        song = song,
+                                        isCurrentlyPlaying = false,
+                                        onClick = { onPlaySongClick(song) },
+                                        showDivider = song != songs.lastOrNull(),
+                                        isInLibrary = librarySongIds.contains(song.id),
+                                    )
+                                }
+                            }
 
-                    if (playlists.isNotEmpty()) {
-                        item {
-                            Spacer(modifier = Modifier.height(16.dp))
-                            TextMMD(
-                                text = "Playlists (${playlists.size})",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
+                            if (
+                                !isSearching &&
+                                errorMessage == null &&
+                                songs.isEmpty()
+                            ) {
+                                item {
+                                    TextMMD(text = "No songs. Try a different search.")
+                                }
+                            }
                         }
-                        items(playlists) { playlist ->
-                            PlaylistItem(
-                                playlist = playlist,
-                                onClick = { onPlaylistClick(playlist) },
-                                showDivider = playlist != playlists.lastOrNull(),
-                            )
-                        }
-                    }
 
-                    if (
-                        !isSearching &&
-                        errorMessage == null &&
-                        songs.isEmpty() &&
-                        playlists.isEmpty()
-                    ) {
-                        item {
-                            TextMMD(text = "No results. Try a different search.")
+                        1 -> {
+                            if (albums.isNotEmpty()) {
+                                items(albums.size) { index ->
+                                    val album = albums[index]
+                                    AlbumItem(
+                                        album = album,
+                                        onClick = { onAlbumClick(album) },
+                                        showDivider = album != albums.lastOrNull(),
+                                    )
+                                }
+                            }
+
+                            if (
+                                !isSearching &&
+                                errorMessage == null &&
+                                albums.isEmpty()
+                            ) {
+                                item {
+                                    TextMMD(text = "No albums. Try a different search.")
+                                }
+                            }
                         }
                     }
                 }

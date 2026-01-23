@@ -1,19 +1,27 @@
 package com.calmapps.calmmusic
 
 import android.app.Application
+import android.net.Uri
+import androidx.annotation.OptIn
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import com.apple.android.music.playback.model.PlaybackRepeatMode
+import com.calmapps.calmmusic.data.AlbumEntity
+import com.calmapps.calmmusic.data.ArtistEntity
 import com.calmapps.calmmusic.data.CalmMusicDatabase
+import com.calmapps.calmmusic.data.CalmMusicSettingsManager
 import com.calmapps.calmmusic.data.LibraryRepository
 import com.calmapps.calmmusic.data.NowPlayingSnapshot
 import com.calmapps.calmmusic.data.NowPlayingStorage
 import com.calmapps.calmmusic.data.NowPlayingRepeatModeKeys
+import com.calmapps.calmmusic.data.SongEntity
 import com.calmapps.calmmusic.playback.PlaybackCoordinator
 import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.ArtistUiModel
@@ -25,19 +33,20 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 /**
  * ViewModel responsible for owning long-lived CalmMusic library state and
- * running initial database loads. Behavior is intended to match the pre-refactor
- * MainActivity/CalmMusic composable logic.
  */
 class CalmMusicViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
 
     private val app: CalmMusic
+        @OptIn(UnstableApi::class)
         get() = getApplication() as CalmMusic
 
     private val database: CalmMusicDatabase by lazy { CalmMusicDatabase.getDatabase(app) }
@@ -51,6 +60,8 @@ class CalmMusicViewModel(
     private val playbackCoordinator = PlaybackCoordinator()
     private var localPlaybackMonitorJob: Job? = null
 
+    private var lastCompletedSongId: String? = null
+
     private val _librarySongs = MutableStateFlow<List<SongUiModel>>(emptyList())
     val librarySongs: StateFlow<List<SongUiModel>> = _librarySongs
 
@@ -62,19 +73,104 @@ class CalmMusicViewModel(
 
     private val _libraryPlaylists = MutableStateFlow<List<PlaylistUiModel>>(emptyList())
 
+    private val _libraryRefreshTrigger = MutableStateFlow(0)
+    val libraryRefreshTrigger: StateFlow<Int> = _libraryRefreshTrigger.asStateFlow()
+
     private val _isLoadingSongs = MutableStateFlow(true)
     val isLoadingSongs: StateFlow<Boolean> = _isLoadingSongs
 
     private val _isLoadingAlbums = MutableStateFlow(true)
     val isLoadingAlbums: StateFlow<Boolean> = _isLoadingAlbums
- 
+
     private val _playbackState = MutableStateFlow(PlaybackState())
     val playbackState: StateFlow<PlaybackState> = _playbackState
 
+    fun onSongDownloaded(youtubeSongId: String, controller: MediaController?) {
+        viewModelScope.launch {
+            delay(200)
+
+            val state = _playbackState.value
+            val queue = state.playbackQueue
+
+            val indexInQueue = queue.indexOfFirst { it.id == youtubeSongId && it.sourceType == "YOUTUBE" }
+            if (indexInQueue == -1) return@launch
+
+            val library = _librarySongs.value
+            val oldSong = queue[indexInQueue]
+
+            val newLocalSong = library.find { candidate ->
+                if (candidate.sourceType != "LOCAL_FILE") return@find false
+
+                if (areSongsMatching(candidate, oldSong)) return@find true
+
+                val dur1 = candidate.durationMillis ?: 0L
+                val dur2 = oldSong.durationMillis ?: 0L
+                val durationMatch = abs(dur1 - dur2) < 2500
+
+                val artist1 = candidate.artist.lowercase().replace(Regex("[^a-z0-9]"), "")
+                val artist2 = oldSong.artist.lowercase().replace(Regex("[^a-z0-9]"), "")
+                val artistMatch = artist1.isNotEmpty() && (artist1.contains(artist2) || artist2.contains(artist1))
+
+                durationMatch && artistMatch
+            } ?: return@launch
+
+            val newQueue = queue.toMutableList()
+            newQueue[indexInQueue] = newLocalSong.copy(
+                trackNumber = oldSong.trackNumber,
+                discNumber = oldSong.discNumber
+            )
+
+            val isNowPlaying = (state.playbackQueueIndex == indexInQueue)
+
+            if (isNowPlaying && controller != null && state.isPlaybackPlaying) {
+                val currentPos = controller.currentPosition
+
+                val newState = state.copy(
+                    playbackQueue = newQueue,
+                    playbackQueueEntities = newQueue.map { it.toQueueEntity() },
+                    nowPlayingSong = newLocalSong,
+                    currentSongId = newLocalSong.id,
+                    nowPlayingDurationMs = newLocalSong.durationMillis ?: state.nowPlayingDurationMs,
+                    isBuffering = true
+                )
+                _playbackState.value = newState
+                persistPlaybackSnapshot(newState)
+
+                startPlaybackFromQueue(
+                    queue = newQueue,
+                    startIndex = indexInQueue,
+                    isNewQueue = false,
+                    localController = controller,
+                    startPositionMs = currentPos
+                )
+            } else {
+                val newState = state.copy(
+                    playbackQueue = newQueue,
+                    playbackQueueEntities = newQueue.map { it.toQueueEntity() },
+                    nowPlayingSong = if (isNowPlaying) newLocalSong else state.nowPlayingSong,
+                    currentSongId = if (isNowPlaying) newLocalSong.id else state.currentSongId
+                )
+                _playbackState.value = newState
+                persistPlaybackSnapshot(newState)
+            }
+        }
+    }
+
     suspend fun getAlbumSongs(albumId: String): List<SongUiModel> {
         return withContext(Dispatchers.IO) {
-            val entities = songDao.getSongsByAlbumId(albumId)
-            entities.map { entity ->
+            val idsToFetch = mutableListOf(albumId)
+
+            if (albumId.startsWith("LOCAL_FILE:")) {
+                idsToFetch.add(albumId.replaceFirst("LOCAL_FILE:", "YOUTUBE:"))
+            } else if (albumId.startsWith("YOUTUBE:")) {
+                idsToFetch.add(albumId.replaceFirst("YOUTUBE:", "LOCAL_FILE:"))
+            }
+
+            val allEntities = idsToFetch.flatMap { id ->
+                songDao.getSongsByAlbumId(id)
+            }.distinctBy { it.id }
+
+            allEntities.map { entity ->
                 SongUiModel(
                     id = entity.id,
                     title = entity.title,
@@ -86,6 +182,122 @@ class CalmMusicViewModel(
                     sourceType = entity.sourceType,
                     audioUri = entity.audioUri,
                     album = entity.album,
+                )
+            }.sortedWith(compareBy({ it.discNumber ?: 1 }, { it.trackNumber ?: 0 }))
+        }
+    }
+
+    suspend fun getAlbumSongsForDetails(album: AlbumUiModel): List<SongUiModel> {
+        val localSongs = getAlbumSongs(album.id)
+
+        val settings = CalmMusicSettingsManager(app)
+        val shouldComplete = settings.getCompleteAlbumsWithYouTubeSync()
+
+        if (localSongs.isNotEmpty()) {
+            if (shouldComplete) {
+                val youtubeSongs = getYouTubeAlbumSongs(album)
+                if (youtubeSongs.isNotEmpty()) {
+                    return mergeLocalAndYouTubeAlbums(localSongs, youtubeSongs)
+                }
+            }
+            return localSongs
+        }
+
+        return if (album.sourceType == "YOUTUBE") {
+            getYouTubeAlbumSongs(album)
+        } else {
+            emptyList()
+        }
+    }
+
+    private fun mergeLocalAndYouTubeAlbums(
+        localSongs: List<SongUiModel>,
+        youtubeSongs: List<SongUiModel>
+    ): List<SongUiModel> {
+        val mergedList = mutableListOf<SongUiModel>()
+        val availableLocal = localSongs.toMutableList()
+
+        for (ytSong in youtubeSongs) {
+            val matchIndex = availableLocal.indexOfFirst { local ->
+                areSongsMatching(local, ytSong)
+            }
+
+            if (matchIndex != -1) {
+                val localSong = availableLocal.removeAt(matchIndex)
+                val displaySong = localSong.copy(
+                    trackNumber = ytSong.trackNumber,
+                    discNumber = ytSong.discNumber
+                )
+
+                mergedList.add(displaySong)
+            } else {
+                mergedList.add(ytSong)
+            }
+        }
+
+        if (availableLocal.isNotEmpty()) {
+            mergedList.addAll(availableLocal.sortedBy { it.trackNumber })
+        }
+
+        return mergedList
+    }
+
+    private fun areSongsMatching(local: SongUiModel, remote: SongUiModel): Boolean {
+        fun normalize(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
+
+        val lTitle = normalize(local.title)
+        val rTitle = normalize(remote.title)
+
+        if (lTitle == rTitle) return true
+
+        if (lTitle.length > 3 && rTitle.length > 3) {
+            if (lTitle.contains(rTitle) || rTitle.contains(lTitle)) return true
+        }
+
+        return false
+    }
+
+    private suspend fun getYouTubeAlbumSongs(album: AlbumUiModel): List<SongUiModel> {
+        return withContext(Dispatchers.IO) {
+            val termBuilder = StringBuilder().apply {
+                append(album.title)
+                val artist = album.artist
+                if (!artist.isNullOrBlank()) {
+                    append(' ')
+                    append(artist)
+                }
+            }
+
+            val results = app.youTubeInnertubeClient.searchSongs(
+                query = termBuilder.toString(),
+                limit = 50,
+            )
+
+            val targetAlbumName = album.title.trim()
+
+            val filtered = results.filter { result ->
+                val resultAlbum = result.album?.trim().orEmpty()
+                if (resultAlbum.isEmpty()) return@filter false
+
+                resultAlbum.equals(targetAlbumName, ignoreCase = true) ||
+                        resultAlbum.contains(targetAlbumName, ignoreCase = true) ||
+                        targetAlbumName.contains(resultAlbum, ignoreCase = true)
+            }
+
+            val songsForAlbum = if (filtered.isNotEmpty()) filtered else results
+
+            songsForAlbum.mapIndexed { index, item ->
+                SongUiModel(
+                    id = item.videoId,
+                    title = item.title,
+                    artist = item.artist,
+                    durationText = formatDurationMillis(item.durationMillis),
+                    durationMillis = item.durationMillis,
+                    trackNumber = index + 1,
+                    discNumber = 1,
+                    sourceType = "YOUTUBE",
+                    audioUri = item.videoId,
+                    album = album.title,
                 )
             }
         }
@@ -129,24 +341,28 @@ class CalmMusicViewModel(
                     years.filterNotNull().maxOrNull()
                 }
 
-            val albums = albumEntities
-                .sortedWith(
-                    compareByDescending<com.calmapps.calmmusic.data.AlbumEntity> { album ->
-                        // Newest release first; albums without a year go last.
-                        albumIdToYear[album.id] ?: Int.MIN_VALUE
-                    }.thenBy { album -> album.name },
-                )
-                .map { album ->
+            val mergedAlbums = albumEntities
+                .groupBy {
+                    (it.name.lowercase().trim() to (it.artist?.lowercase()?.trim() ?: ""))
+                }
+                .map { (_, duplicates) ->
+                    val primary = duplicates.find { it.sourceType == "LOCAL_FILE" } ?: duplicates.first()
+
                     AlbumUiModel(
-                        id = album.id,
-                        title = album.name,
-                        artist = album.artist,
-                        sourceType = album.sourceType,
-                        releaseYear = albumIdToYear[album.id],
+                        id = primary.id,
+                        title = primary.name,
+                        artist = primary.artist,
+                        sourceType = primary.sourceType,
+                        releaseYear = albumIdToYear[primary.id],
                     )
                 }
+                .sortedWith(
+                    compareByDescending<AlbumUiModel> { album ->
+                        album.releaseYear ?: Int.MIN_VALUE
+                    }.thenBy { album -> album.title },
+                )
 
-            ArtistContent(songs, albums)
+            ArtistContent(songs, mergedAlbums)
         }
     }
 
@@ -191,7 +407,7 @@ class CalmMusicViewModel(
 
             val needsInit = when (song.sourceType) {
                 "APPLE_MUSIC" -> !playbackCoordinator.appleQueueInitialized
-                "LOCAL_FILE" -> !playbackCoordinator.localQueueInitialized
+                "LOCAL_FILE", "YOUTUBE" -> !playbackCoordinator.localQueueInitialized
                 else -> false
             }
 
@@ -224,11 +440,30 @@ class CalmMusicViewModel(
         persistPlaybackSnapshot()
     }
 
+    private fun SongUiModel.toQueueEntity(): SongEntity =
+        SongEntity(
+            id = id,
+            title = title,
+            artist = artist,
+            album = album,
+            albumId = null,
+            discNumber = discNumber,
+            trackNumber = trackNumber,
+            durationMillis = durationMillis,
+            sourceType = sourceType,
+            audioUri = audioUri ?: id,
+            artistId = null,
+            releaseYear = null,
+            localLastModifiedMillis = null,
+            localFileSizeBytes = null,
+        )
+
     fun startPlaybackFromQueue(
         queue: List<SongUiModel>,
         startIndex: Int,
         isNewQueue: Boolean = true,
         localController: MediaController?,
+        startPositionMs: Long = 0L,
     ) {
         if (queue.isEmpty() || startIndex !in queue.indices) return
 
@@ -241,18 +476,24 @@ class CalmMusicViewModel(
         val song = queue[startIndex]
         val repeatMode = previous.repeatMode
 
-        _playbackState.value = previous.copy(
+        val queueEntities = queue.map { it.toQueueEntity() }
+        val shouldShowInitialBuffering = song.sourceType != "LOCAL_FILE"
+
+        val newState = previous.copy(
             playbackQueue = queue,
+            playbackQueueEntities = queueEntities,
             playbackQueueIndex = startIndex,
             originalPlaybackQueue = originalQueue,
             isShuffleOn = shuffle,
             currentSongId = song.id,
             nowPlayingSong = song,
             isPlaybackPlaying = true,
-            nowPlayingPositionMs = 0L,
+            isBuffering = shouldShowInitialBuffering,
+            nowPlayingPositionMs = startPositionMs,
             nowPlayingDurationMs = song.durationMillis ?: 0L,
         )
-        persistPlaybackSnapshot()
+        _playbackState.value = newState
+        persistPlaybackSnapshot(newState)
 
         if (song.sourceType == "APPLE_MUSIC") {
             val appleIndex = playbackCoordinator.appleIndexByGlobal?.let { map ->
@@ -279,24 +520,48 @@ class CalmMusicViewModel(
         } else if (song.sourceType == "LOCAL_FILE") {
             val controller = localController
             if (controller != null && playbackCoordinator.localMediaItemsForQueue.isNotEmpty()) {
-                val localIndex = playbackCoordinator.localIndexByGlobal?.let { map ->
-                    if (startIndex in map.indices) map[startIndex] else -1
-                }?.takeIf { it >= 0 } ?: 0
 
-                controller.setMediaItems(
-                    playbackCoordinator.localMediaItemsForQueue,
-                    localIndex,
-                    0L
-                )
-
-                controller.repeatMode = when (repeatMode) {
-                    RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                    RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
-                    RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+                // IMPORTANT: Segmented Playback Logic
+                // We identify the contiguous segment of local files starting from startIndex.
+                // This prevents the player from auto-advancing into "gaps" where a YouTube song should be.
+                var segmentEndIndex = startIndex
+                while (segmentEndIndex < queue.size && queue[segmentEndIndex].sourceType == "LOCAL_FILE") {
+                    segmentEndIndex++
                 }
 
-                controller.prepare()
-                controller.playWhenReady = true
+                // Construct the MediaItem list for ONLY this segment
+                val segmentMediaItems = (startIndex until segmentEndIndex).mapNotNull { globalIndex ->
+                    val localIndex = playbackCoordinator.localIndexByGlobal?.get(globalIndex)
+                    if (localIndex != null && localIndex != -1) {
+                        playbackCoordinator.localMediaItemsForQueue.getOrNull(localIndex)
+                    } else null
+                }
+
+                if (segmentMediaItems.isNotEmpty()) {
+                    controller.setMediaItems(
+                        segmentMediaItems,
+                        0, // Start at the beginning of THIS segment
+                        startPositionMs
+                    )
+
+                    // IMPORTANT: Never delegate REPEAT_ALL to the local player in a mixed queue.
+                    // The ViewModel must handle the loop.
+                    controller.repeatMode = when (repeatMode) {
+                        RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+                        else -> Player.REPEAT_MODE_OFF
+                    }
+
+                    controller.prepare()
+                    controller.playWhenReady = true
+                    playbackCoordinator.localQueueInitialized = true
+                }
+            }
+        } else if (song.sourceType == "YOUTUBE") {
+            val controller = localController
+            if (controller != null) {
+                viewModelScope.launch {
+                    playYouTubeSongInQueue(song, startIndex, controller, startPositionMs)
+                }
                 playbackCoordinator.localQueueInitialized = true
             }
         }
@@ -335,7 +600,7 @@ class CalmMusicViewModel(
         }
 
         val nextSong = queue[targetIndex]
-        val currentSong = queue[currentIndex]
+        val shouldShowBuffering = nextSong.sourceType != "LOCAL_FILE"
 
         _playbackState.value = state.copy(
             playbackQueueIndex = targetIndex,
@@ -344,75 +609,16 @@ class CalmMusicViewModel(
             nowPlayingDurationMs = nextSong.durationMillis ?: state.nowPlayingDurationMs,
             nowPlayingPositionMs = 0L,
             isPlaybackPlaying = true,
+            isBuffering = shouldShowBuffering,
         )
         persistPlaybackSnapshot()
 
-        when (nextSong.sourceType) {
-            "APPLE_MUSIC" -> {
-                val map = playbackCoordinator.appleIndexByGlobal
-                val newAppleIndex = map?.let {
-                    if (targetIndex in it.indices) it[targetIndex] else -1
-                }?.takeIf { it >= 0 }
-
-                if (newAppleIndex == null || playbackCoordinator.appleCatalogIdsForQueue.isEmpty()) {
-                    startPlaybackFromQueue(queue, targetIndex, isNewQueue = false, localController = localController)
-                    return
-                }
-
-                localController?.playWhenReady = false
-
-                val oldAppleIndex =
-                    if (currentSong.sourceType == "APPLE_MUSIC" && currentIndex in map.indices) {
-                        map[currentIndex].takeIf { it >= 0 }
-                    } else {
-                        null
-                    }
-
-                if (playbackCoordinator.appleQueueInitialized && oldAppleIndex != null && newAppleIndex == oldAppleIndex + 1) {
-                    app.appleMusicPlayer.skipToNextItem()
-                } else {
-                    app.appleMusicPlayer.playQueueOfSongs(
-                        playbackCoordinator.appleCatalogIdsForQueue,
-                        newAppleIndex
-                    )
-                    playbackCoordinator.appleQueueInitialized = true
-                }
-            }
-
-            "LOCAL_FILE" -> {
-                val controller = localController
-                val map = playbackCoordinator.localIndexByGlobal
-                val localIndex = map?.let {
-                    if (targetIndex in it.indices) it[targetIndex] else -1
-                }?.takeIf { it >= 0 }
-
-                if (controller == null || localIndex == null || playbackCoordinator.localMediaItemsForQueue.isNotEmpty().not()) {
-                    startPlaybackFromQueue(queue, targetIndex, isNewQueue = false, localController = controller)
-                    return
-                }
-
-                app.appleMusicPlayer.pause()
-
-                if (!playbackCoordinator.localQueueInitialized) {
-                    controller.setMediaItems(
-                        playbackCoordinator.localMediaItemsForQueue,
-                        localIndex,
-                        0L
-                    )
-                    controller.repeatMode = when (state.repeatMode) {
-                        RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                        RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
-                        RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-                    }
-                    controller.prepare()
-                    controller.playWhenReady = true
-                    playbackCoordinator.localQueueInitialized = true
-                } else {
-                    controller.seekTo(localIndex, 0L)
-                    controller.playWhenReady = true
-                }
-            }
-        }
+        startPlaybackFromQueue(
+            queue = queue,
+            startIndex = targetIndex,
+            isNewQueue = false,
+            localController = localController,
+        )
     }
 
     fun playPreviousInQueue(localController: MediaController?) {
@@ -431,7 +637,7 @@ class CalmMusicViewModel(
         }
 
         val prevSong = queue[targetIndex]
-        val currentSong = queue[currentIndex]
+        val shouldShowBuffering = prevSong.sourceType != "LOCAL_FILE"
 
         _playbackState.value = state.copy(
             playbackQueueIndex = targetIndex,
@@ -440,75 +646,16 @@ class CalmMusicViewModel(
             nowPlayingDurationMs = prevSong.durationMillis ?: state.nowPlayingDurationMs,
             nowPlayingPositionMs = 0L,
             isPlaybackPlaying = true,
+            isBuffering = shouldShowBuffering,
         )
         persistPlaybackSnapshot()
 
-        when (prevSong.sourceType) {
-            "APPLE_MUSIC" -> {
-                val map = playbackCoordinator.appleIndexByGlobal
-                val newAppleIndex = map?.let {
-                    if (targetIndex in it.indices) it[targetIndex] else -1
-                }?.takeIf { it >= 0 }
-
-                if (newAppleIndex == null || playbackCoordinator.appleCatalogIdsForQueue.isEmpty()) {
-                    startPlaybackFromQueue(queue, targetIndex, isNewQueue = false, localController = localController)
-                    return
-                }
-
-                localController?.playWhenReady = false
-
-                val oldAppleIndex =
-                    if (currentSong.sourceType == "APPLE_MUSIC" && currentIndex in map.indices) {
-                        map[currentIndex].takeIf { it >= 0 }
-                    } else {
-                        null
-                    }
-
-                if (playbackCoordinator.appleQueueInitialized && oldAppleIndex != null && newAppleIndex == oldAppleIndex - 1) {
-                    app.appleMusicPlayer.skipToPreviousItem()
-                } else {
-                    app.appleMusicPlayer.playQueueOfSongs(
-                        playbackCoordinator.appleCatalogIdsForQueue,
-                        newAppleIndex
-                    )
-                    playbackCoordinator.appleQueueInitialized = true
-                }
-            }
-
-            "LOCAL_FILE" -> {
-                val controller = localController
-                val map = playbackCoordinator.localIndexByGlobal
-                val localIndex = map?.let {
-                    if (targetIndex in it.indices) it[targetIndex] else -1
-                }?.takeIf { it >= 0 }
-
-                if (controller == null || localIndex == null || playbackCoordinator.localMediaItemsForQueue.isNotEmpty().not()) {
-                    startPlaybackFromQueue(queue, targetIndex, isNewQueue = false, localController = controller)
-                    return
-                }
-
-                app.appleMusicPlayer.pause()
-
-                if (!playbackCoordinator.localQueueInitialized) {
-                    controller.setMediaItems(
-                        playbackCoordinator.localMediaItemsForQueue,
-                        localIndex,
-                        0L
-                    )
-                    controller.repeatMode = when (state.repeatMode) {
-                        RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                        RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
-                        RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-                    }
-                    controller.prepare()
-                    controller.playWhenReady = true
-                    playbackCoordinator.localQueueInitialized = true
-                } else {
-                    controller.seekTo(localIndex, 0L)
-                    controller.playWhenReady = true
-                }
-            }
-        }
+        startPlaybackFromQueue(
+            queue = queue,
+            startIndex = targetIndex,
+            isNewQueue = false,
+            localController = localController,
+        )
     }
 
     fun toggleShuffleMode(localController: MediaController?) {
@@ -522,46 +669,30 @@ class CalmMusicViewModel(
         if (!state.isShuffleOn) {
             val remaining = (queue.take(index) + queue.drop(index + 1)).shuffled()
             val newQueue = listOf(current) + remaining
+            val newQueueEntities = newQueue.map { it.toQueueEntity() }
 
-            rebuildPlaybackSubqueues(newQueue)
-
-            _playbackState.value = state.copy(
+            val newState = state.copy(
                 playbackQueue = newQueue,
+                playbackQueueEntities = newQueueEntities,
                 playbackQueueIndex = 0,
                 originalPlaybackQueue = queue,
                 isShuffleOn = true,
                 currentSongId = current.id,
                 nowPlayingSong = current,
             )
-            persistPlaybackSnapshot()
+            _playbackState.value = newState
+            persistPlaybackSnapshot(newState)
 
-            if (current.sourceType == "APPLE_MUSIC") {
-                val appleSongs = newQueue.filter { it.sourceType == "APPLE_MUSIC" }
-                val appleIds = appleSongs.map { it.audioUri ?: it.id }
-                val appleIndex =
-                    appleSongs.indexOfFirst { it.id == current.id }.takeIf { it >= 0 } ?: 0
-                if (appleIds.isNotEmpty()) {
-                    app.appleMusicPlayer.playQueueOfSongs(appleIds, appleIndex)
-                } else {
-                    app.appleMusicPlayer.playSongById(current.audioUri ?: current.id)
-                }
-            } else if (current.sourceType == "LOCAL_FILE") {
-                val controller = localController ?: return
-                val localSongs = newQueue
-                    .filter { it.sourceType == "LOCAL_FILE" && !it.audioUri.isNullOrBlank() }
-                if (localSongs.isEmpty()) return
-
-                val mediaItems = localSongs.map { MediaItem.fromUri(it.audioUri!!) }
-                val targetUri = current.audioUri ?: current.id
-                val localStartIndex =
-                    mediaItems.indexOfFirst { it.localConfiguration?.uri.toString() == targetUri }
-                        .takeIf { it >= 0 } ?: 0
-
-                controller.setMediaItems(mediaItems, localStartIndex, 0L)
-                controller.prepare()
-                controller.playWhenReady = true
-                playbackCoordinator.localQueueInitialized = true
+            if (current.sourceType == "LOCAL_FILE") {
+                startPlaybackFromQueue(
+                    queue = newQueue,
+                    startIndex = 0,
+                    isNewQueue = false,
+                    localController = localController,
+                    startPositionMs = state.nowPlayingPositionMs
+                )
             }
+
         } else {
             if (state.originalPlaybackQueue.isEmpty()) {
                 _playbackState.value = state.copy(isShuffleOn = false)
@@ -573,49 +704,30 @@ class CalmMusicViewModel(
             val originalIndex = restoreQueue.indexOfFirst { it.id == current.id }
                 .takeIf { it >= 0 } ?: 0
 
-            rebuildPlaybackSubqueues(restoreQueue)
-
             val restoredCurrent = restoreQueue[originalIndex]
+            val restoreEntities = restoreQueue.map { it.toQueueEntity() }
 
-            _playbackState.value = state.copy(
+            val newState = state.copy(
                 isShuffleOn = false,
                 playbackQueue = restoreQueue,
+                playbackQueueEntities = restoreEntities,
                 playbackQueueIndex = originalIndex,
                 currentSongId = restoredCurrent.id,
                 nowPlayingSong = restoredCurrent,
                 nowPlayingDurationMs = restoredCurrent.durationMillis ?: state.nowPlayingDurationMs,
                 nowPlayingPositionMs = 0L,
             )
-            persistPlaybackSnapshot()
+            _playbackState.value = newState
+            persistPlaybackSnapshot(newState)
 
-            if (restoredCurrent.sourceType == "APPLE_MUSIC") {
-                val appleSongs = restoreQueue.filter { it.sourceType == "APPLE_MUSIC" }
-                val appleIds = appleSongs.map { it.audioUri ?: it.id }
-                val appleIndex = appleSongs.indexOfFirst { it.id == restoredCurrent.id }
-                    .takeIf { it >= 0 } ?: 0
-                if (appleIds.isNotEmpty()) {
-                    app.appleMusicPlayer.playQueueOfSongs(appleIds, appleIndex)
-                } else {
-                    app.appleMusicPlayer.playSongById(
-                        restoredCurrent.audioUri ?: restoredCurrent.id
-                    )
-                }
-            } else if (restoredCurrent.sourceType == "LOCAL_FILE") {
-                val controller = localController ?: return
-                val localSongs = restoreQueue
-                    .filter { it.sourceType == "LOCAL_FILE" && !it.audioUri.isNullOrBlank() }
-                if (localSongs.isEmpty()) return
-
-                val mediaItems = localSongs.map { MediaItem.fromUri(it.audioUri!!) }
-                val targetUri = restoredCurrent.audioUri ?: restoredCurrent.id
-                val localStartIndex =
-                    mediaItems.indexOfFirst { it.localConfiguration?.uri.toString() == targetUri }
-                        .takeIf { it >= 0 } ?: 0
-
-                controller.setMediaItems(mediaItems, localStartIndex, 0L)
-                controller.prepare()
-                controller.playWhenReady = true
-                playbackCoordinator.localQueueInitialized = true
+            if (restoredCurrent.sourceType == "LOCAL_FILE") {
+                startPlaybackFromQueue(
+                    queue = restoreQueue,
+                    startIndex = originalIndex,
+                    isNewQueue = false,
+                    localController = localController,
+                    startPositionMs = state.nowPlayingPositionMs
+                )
             }
         }
     }
@@ -635,9 +747,8 @@ class CalmMusicViewModel(
         if (song?.sourceType == "LOCAL_FILE") {
             localController?.let { controller ->
                 controller.repeatMode = when (newRepeat) {
-                    RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                    RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
                     RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+                    else -> Player.REPEAT_MODE_OFF // Always OFF for Queue/Off
                 }
             }
         } else if (song?.sourceType == "APPLE_MUSIC") {
@@ -678,71 +789,225 @@ class CalmMusicViewModel(
         }
     }
 
+    @OptIn(UnstableApi::class)
+    private suspend fun playYouTubeSongInQueue(
+        song: SongUiModel,
+        targetIndex: Int,
+        localController: MediaController,
+        startPositionMs: Long = 0L,
+    ) {
+        val videoId = song.id
+
+        withContext(Dispatchers.Main) {
+            val metadata = MediaMetadata.Builder()
+                .setTitle(song.title)
+                .setArtist(song.artist)
+                .setAlbumTitle(song.album)
+                .setArtworkUri(Uri.parse("https://i.ytimg.com/vi/$videoId/hqdefault.jpg"))
+                .build()
+
+            val mediaItem = MediaItem.Builder()
+                .setMediaId(videoId)
+                .setCustomCacheKey(videoId)
+                .setUri("https://www.youtube.com/watch?v=$videoId")
+                .setMediaMetadata(metadata)
+                .build()
+
+            localController.setMediaItem(mediaItem)
+            localController.prepare()
+            if (startPositionMs > 0) {
+                localController.seekTo(startPositionMs)
+            }
+            localController.playWhenReady = true
+
+            val currentState = _playbackState.value
+            if (targetIndex != currentState.playbackQueueIndex && currentState.currentSongId != song.id) {
+                return@withContext
+            }
+
+            val updatedSong = song.copy(
+                sourceType = "YOUTUBE",
+                audioUri = videoId,
+            )
+
+            val state = _playbackState.value
+            if (targetIndex !in state.playbackQueue.indices) {
+                return@withContext
+            }
+
+            val updatedQueue = state.playbackQueue.toMutableList()
+            updatedQueue[targetIndex] = updatedSong
+
+            val updatedQueueEntities = updatedQueue.map { it.toQueueEntity() }
+
+            val newState = state.copy(
+                playbackQueue = updatedQueue,
+                playbackQueueEntities = updatedQueueEntities,
+                currentSongId = updatedSong.id,
+                nowPlayingSong = updatedSong,
+                nowPlayingDurationMs = updatedSong.durationMillis ?: state.nowPlayingDurationMs,
+                nowPlayingPositionMs = startPositionMs, // Reflect the actual start pos
+                isPlaybackPlaying = true,
+            )
+
+            _playbackState.value = newState
+            persistPlaybackSnapshot(newState)
+        }
+    }
+
     fun startLocalPlaybackMonitoring(controller: MediaController) {
         localPlaybackMonitorJob?.cancel()
         localPlaybackMonitorJob = viewModelScope.launch {
             var lastLocalQueueIndex: Int? = null
-            // Use a dynamic polling interval so we back off when playback is
-            // idle or when the current song is not a local file.
-            val fastIntervalMs = 750L
+            var lastYouTubeQueueIndex: Int? = null
+            val fastIntervalMs = 200L
             val slowIntervalMs = 2000L
 
             while (true) {
-                if (!controller.isConnected) {
-                    break
-                }
-
                 val state = _playbackState.value
                 val currentSong = state.nowPlayingSong
+                val isLocalFile = currentSong?.sourceType == "LOCAL_FILE"
+                val isYouTube = currentSong?.sourceType == "YOUTUBE"
+                var didAutoAdvance = false
 
-                if (currentSong?.sourceType != "LOCAL_FILE") {
+                if (!isLocalFile && !isYouTube) {
                     delay(slowIntervalMs)
                     continue
                 }
 
+                // Read controller state
                 val isPlaying = controller.playWhenReady
                 val position = controller.currentPosition
                 val duration = controller.duration
+                val playbackState = controller.playbackState
+                val isBufferingNow = !isLocalFile && playbackState == Player.STATE_BUFFERING
 
                 var newState = state.copy(
                     isPlaybackPlaying = isPlaying,
                     nowPlayingPositionMs = position,
                     nowPlayingDurationMs = if (duration > 0) duration else state.nowPlayingDurationMs,
+                    isBuffering = isBufferingNow,
                 )
 
-                val currentLocalIndex = controller.currentMediaItemIndex
-                if (currentLocalIndex >= 0 && currentLocalIndex != lastLocalQueueIndex) {
-                    lastLocalQueueIndex = currentLocalIndex
-                    val localQueue = playbackCoordinator.localPlaybackSubqueue
-                    if (currentLocalIndex in localQueue.indices) {
-                        val newLocalSong = localQueue[currentLocalIndex]
-                        val globalIndex = playbackCoordinator.localIndexByGlobal
-                            ?.indexOf(currentLocalIndex) ?: -1
-                        if (globalIndex >= 0) {
-                            newState = newState.copy(
-                                playbackQueueIndex = globalIndex,
-                                currentSongId = newLocalSong.id,
-                                nowPlayingSong = newLocalSong,
-                                nowPlayingDurationMs = newLocalSong.durationMillis
-                                    ?: newState.nowPlayingDurationMs,
-                                nowPlayingPositionMs = 0L,
-                                isPlaybackPlaying = isPlaying,
-                            )
+                if (isLocalFile) {
+                    val currentLocalIndex = controller.currentMediaItemIndex
+
+                    if (currentLocalIndex >= 0 && lastLocalQueueIndex != null && currentLocalIndex != lastLocalQueueIndex) {
+
+                        val delta = currentLocalIndex - lastLocalQueueIndex!!
+
+                        if (delta > 0) {
+                            val queue = state.playbackQueue
+                            val globalStartIndex = state.playbackQueueIndex ?: 0
+
+                            var foundCount = -1
+                            var targetGlobalIndex = -1
+
+                            for (i in globalStartIndex until queue.size) {
+                                if (queue[i].sourceType == "LOCAL_FILE") {
+                                    foundCount++
+                                }
+                                if (foundCount == delta) {
+                                    targetGlobalIndex = i
+                                    break
+                                }
+                            }
+
+                            if (targetGlobalIndex >= 0) {
+                                lastLocalQueueIndex = currentLocalIndex
+
+                                val newLocalSong = queue[targetGlobalIndex]
+                                newState = newState.copy(
+                                    playbackQueueIndex = targetGlobalIndex,
+                                    currentSongId = newLocalSong.id,
+                                    nowPlayingSong = newLocalSong,
+                                    nowPlayingDurationMs = newLocalSong.durationMillis
+                                        ?: newState.nowPlayingDurationMs,
+                                    nowPlayingPositionMs = 0L,
+                                    isPlaybackPlaying = isPlaying,
+                                )
+                            }
+                        } else {
+                            lastLocalQueueIndex = currentLocalIndex
+                        }
+                    } else if (lastLocalQueueIndex == null) {
+                        lastLocalQueueIndex = currentLocalIndex
+                    }
+                }
+
+                // Handle End-of-Track / End-of-Segment Auto-Advance
+                if (playbackState == Player.STATE_ENDED && currentSong != null) {
+                    val songId = currentSong.id
+                    if (songId != lastCompletedSongId) {
+                        lastCompletedSongId = songId
+
+                        val queue = state.playbackQueue
+                        val currentIndex = state.playbackQueueIndex
+
+                        if (queue.isNotEmpty() && currentIndex != null && currentIndex in queue.indices) {
+                            val hasNext = currentIndex < queue.lastIndex
+                            val hasMultiple = queue.size > 1
+                            when {
+                                state.repeatMode == RepeatMode.ONE -> {
+                                    didAutoAdvance = true
+                                    startPlaybackFromQueue(
+                                        queue = queue,
+                                        startIndex = currentIndex,
+                                        isNewQueue = false,
+                                        localController = controller,
+                                    )
+                                }
+                                hasNext -> {
+                                    didAutoAdvance = true
+                                    playNextInQueue(controller)
+                                }
+                                !hasNext && hasMultiple && state.repeatMode == RepeatMode.QUEUE -> {
+                                    didAutoAdvance = true
+                                    startPlaybackFromQueue(
+                                        queue = queue,
+                                        startIndex = 0,
+                                        isNewQueue = false,
+                                        localController = controller,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else if (playbackState == Player.STATE_READY && isPlaying) {
+                    lastCompletedSongId = null
+                }
+
+                if (isYouTube) {
+                    // Maintain a small prefetch window
+                    val currentIndex = state.playbackQueueIndex
+                    val queue = state.playbackQueue
+                    if (currentIndex != null && currentIndex in queue.indices && currentIndex != lastYouTubeQueueIndex) {
+                        lastYouTubeQueueIndex = currentIndex
+                        val windowIds = mutableListOf<String>()
+                        for (offset in -5..5) {
+                            val idx = currentIndex + offset
+                            if (idx in queue.indices) {
+                                val s = queue[idx]
+                                if (s.sourceType == "YOUTUBE") {
+                                    windowIds += s.id
+                                }
+                            }
+                        }
+                        if (windowIds.isNotEmpty()) {
+                            app.youTubePrecacheManager.updateQueueWindow(windowIds)
                         }
                     }
                 }
 
-                if (newState != state) {
+                if (!didAutoAdvance && newState != state) {
                     _playbackState.value = newState
                     persistPlaybackSnapshot(newState)
                 }
 
                 val nextDelayMs = when {
-                    currentSong.sourceType != "LOCAL_FILE" -> slowIntervalMs
-                    isPlaying -> fastIntervalMs
+                    (isLocalFile || isYouTube) && isPlaying -> fastIntervalMs
                     else -> slowIntervalMs
                 }
-
                 delay(nextDelayMs)
             }
         }
@@ -763,6 +1028,197 @@ class CalmMusicViewModel(
         return result
     }
 
+    suspend fun addStreamingSongToLibrary(song: SongUiModel) {
+        if (song.sourceType != "YOUTUBE") return
+
+        try {
+            var songToSave = song
+            if (songToSave.trackNumber == null && !songToSave.album.isNullOrBlank()) {
+                val artistName = songToSave.artist
+                val albumTitle = songToSave.album!!
+
+                val tempAlbum = AlbumUiModel(
+                    id = "",
+                    title = albumTitle,
+                    artist = artistName,
+                    sourceType = "YOUTUBE",
+                    releaseYear = null
+                )
+
+                val albumSongs = getYouTubeAlbumSongs(tempAlbum)
+
+                val match = albumSongs.firstOrNull {
+                    areSongsMatching(it, songToSave)
+                }
+
+                if (match != null && match.trackNumber != null) {
+                    songToSave = songToSave.copy(
+                        trackNumber = match.trackNumber,
+                        discNumber = match.discNumber ?: 1
+                    )
+                }
+            }
+
+            withContext(Dispatchers.IO) {
+                val artistName = songToSave.artist.takeIf { it.isNotBlank() } ?: "Unknown artist"
+                val albumName = songToSave.album?.takeIf { it.isNotBlank() }
+
+                fun String.toIdComponent(): String =
+                    trim()
+                        .replace(Regex("\\s+"), " ")
+                        .lowercase()
+
+                val artistKey = artistName.toIdComponent()
+                val albumKey = albumName?.toIdComponent()
+
+                val existingArtists = artistDao.getAllArtists()
+                val existingArtist = existingArtists.firstOrNull { existing ->
+                    existing.name.toIdComponent() == artistKey
+                }
+
+                val artistId = existingArtist?.id ?: "YOUTUBE:$artistKey"
+
+                val albumId = if (albumKey != null) {
+                    "YOUTUBE:$artistKey:$albumKey"
+                } else null
+
+                val songEntity = SongEntity(
+                    id = songToSave.id,
+                    title = songToSave.title,
+                    artist = artistName,
+                    album = albumName,
+                    albumId = albumId,
+                    discNumber = songToSave.discNumber,
+                    trackNumber = songToSave.trackNumber,
+                    durationMillis = songToSave.durationMillis,
+                    sourceType = "YOUTUBE",
+                    audioUri = songToSave.id,
+                    artistId = artistId,
+                    releaseYear = null,
+                    localLastModifiedMillis = null,
+                    localFileSizeBytes = null,
+                )
+
+                if (existingArtist == null) {
+                    val artistEntity = ArtistEntity(
+                        id = artistId,
+                        name = artistName,
+                        sourceType = "YOUTUBE",
+                    )
+                    artistDao.upsertAll(listOf(artistEntity))
+                }
+
+                val albumEntity = if (albumId != null && albumName != null) {
+                    AlbumEntity(
+                        id = albumId,
+                        name = albumName,
+                        artist = artistName,
+                        sourceType = "YOUTUBE",
+                        artistId = artistId,
+                    )
+                } else null
+
+                if (albumEntity != null) {
+                    albumDao.upsertAll(listOf(albumEntity))
+                }
+                songDao.upsertAll(listOf(songEntity))
+            }
+
+            refreshLibraryFromDatabase()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun removeSongFromLibrary(song: SongUiModel) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                songDao.deleteByIds(listOf(song.id))
+            }
+            refreshLibraryFromDatabase()
+        }
+    }
+
+    suspend fun refreshLibraryFromDatabase() {
+        try {
+            val (allSongs, allAlbums) = withContext(Dispatchers.IO) {
+                val songsFromDb = songDao.getAllSongs()
+                val albumsFromDb = albumDao.getAllAlbums()
+                songsFromDb to albumsFromDb
+            }
+            val allArtistsWithCounts = withContext(Dispatchers.IO) {
+                artistDao.getAllArtistsWithCounts()
+            }
+
+            val uniqueAlbumCounts = allAlbums
+                .filter { it.artistId != null }
+                .groupBy { it.artistId!! }
+                .mapValues { (_, albums) ->
+                    albums.groupBy {
+                        (it.name.lowercase().trim() to (it.artist?.lowercase()?.trim() ?: ""))
+                    }.count()
+                }
+
+            val songModels = allSongs.map { entity ->
+                SongUiModel(
+                    id = entity.id,
+                    title = entity.title,
+                    artist = entity.artist,
+                    durationText = com.calmapps.calmmusic.formatDurationMillis(entity.durationMillis),
+                    durationMillis = entity.durationMillis,
+                    trackNumber = entity.trackNumber,
+                    sourceType = entity.sourceType,
+                    audioUri = entity.audioUri,
+                    album = entity.album,
+                )
+            }
+
+            val albumIdToYear: Map<String, Int?> = allSongs
+                .mapNotNull { entity ->
+                    val albumId = entity.albumId ?: return@mapNotNull null
+                    albumId to entity.releaseYear
+                }
+                .groupBy(
+                    keySelector = { it.first },
+                    valueTransform = { it.second },
+                )
+                .mapValues { (_, years) ->
+                    years.filterNotNull().maxOrNull()
+                }
+
+            val mergedAlbums = allAlbums
+                .groupBy {
+                    (it.name.lowercase().trim() to (it.artist?.lowercase()?.trim() ?: ""))
+                }
+                .map { (_, duplicates) ->
+                    val primary = duplicates.find { it.sourceType == "LOCAL_FILE" } ?: duplicates.first()
+
+                    AlbumUiModel(
+                        id = primary.id,
+                        title = primary.name,
+                        artist = primary.artist,
+                        sourceType = primary.sourceType,
+                        releaseYear = albumIdToYear[primary.id],
+                    )
+                }
+
+            val artistModels = allArtistsWithCounts.map { artist ->
+                ArtistUiModel(
+                    id = artist.id,
+                    name = artist.name,
+                    songCount = artist.songCount,
+                    albumCount = uniqueAlbumCounts[artist.id] ?: 0,
+                )
+            }
+
+            updateLibrary(
+                songs = songModels,
+                albums = mergedAlbums,
+                artists = artistModels,
+            )
+        } catch (_: Exception) {
+        }
+    }
+
     fun updateLibrary(
         songs: List<SongUiModel>,
         albums: List<AlbumUiModel>,
@@ -771,6 +1227,7 @@ class CalmMusicViewModel(
         _librarySongs.value = songs
         _libraryAlbums.value = albums
         _libraryArtists.value = artists
+        _libraryRefreshTrigger.value += 1
     }
 
     override fun onCleared() {
@@ -784,6 +1241,15 @@ class CalmMusicViewModel(
             val allAlbums = withContext(Dispatchers.IO) { albumDao.getAllAlbums() }
             val allArtistsWithCounts = withContext(Dispatchers.IO) { artistDao.getAllArtistsWithCounts() }
             val allPlaylistsWithCounts = withContext(Dispatchers.IO) { playlistDao.getAllPlaylistsWithSongCount() }
+
+            val uniqueAlbumCounts = allAlbums
+                .filter { it.artistId != null }
+                .groupBy { it.artistId!! }
+                .mapValues { (_, albums) ->
+                    albums.groupBy {
+                        (it.name.lowercase().trim() to (it.artist?.lowercase()?.trim() ?: ""))
+                    }.count()
+                }
 
             _librarySongs.value = allSongs.map { entity ->
                 SongUiModel(
@@ -811,21 +1277,30 @@ class CalmMusicViewModel(
                     years.filterNotNull().maxOrNull()
                 }
 
-            _libraryAlbums.value = allAlbums.map { album ->
-                AlbumUiModel(
-                    id = album.id,
-                    title = album.name,
-                    artist = album.artist,
-                    sourceType = album.sourceType,
-                    releaseYear = albumIdToYear[album.id],
-                )
-            }
+            val mergedAlbums = allAlbums
+                .groupBy {
+                    (it.name.lowercase().trim() to (it.artist?.lowercase()?.trim() ?: ""))
+                }
+                .map { (_, duplicates) ->
+                    val primary = duplicates.find { it.sourceType == "LOCAL_FILE" } ?: duplicates.first()
+
+                    AlbumUiModel(
+                        id = primary.id,
+                        title = primary.name,
+                        artist = primary.artist,
+                        sourceType = primary.sourceType,
+                        releaseYear = albumIdToYear[primary.id],
+                    )
+                }
+
+            _libraryAlbums.value = mergedAlbums
+
             _libraryArtists.value = allArtistsWithCounts.map { artist ->
                 ArtistUiModel(
                     id = artist.id,
                     name = artist.name,
                     songCount = artist.songCount,
-                    albumCount = artist.albumCount,
+                    albumCount = uniqueAlbumCounts[artist.id] ?: 0,
                 )
             }
             _libraryPlaylists.value = allPlaylistsWithCounts.map { playlist ->
@@ -837,7 +1312,6 @@ class CalmMusicViewModel(
                 )
             }
 
-            // Attempt to restore a previously saved now-playing snapshot.
             val snapshot = withContext(Dispatchers.IO) { nowPlayingStorage.load() }
             if (snapshot != null) {
                 val songsById = allSongs.associateBy { it.id }
@@ -867,8 +1341,11 @@ class CalmMusicViewModel(
                         else -> RepeatMode.OFF
                     }
 
+                    val playbackQueueEntities = playbackQueue.map { it.toQueueEntity() }
+
                     _playbackState.value = PlaybackState(
                         playbackQueue = playbackQueue,
+                        playbackQueueEntities = playbackQueueEntities,
                         playbackQueueIndex = effectiveIndex,
                         originalPlaybackQueue = if (snapshot.isShuffleOn) playbackQueue else emptyList(),
                         repeatMode = repeatMode,
@@ -900,14 +1377,10 @@ class CalmMusicViewModel(
             }
     }
 }
- 
-/**
- * Snapshot of app-wide playback state, exposed from CalmMusicViewModel so that
- * UI and other layers can observe now-playing information without needing to
- * know about the underlying players.
- */
+
 data class PlaybackState(
     val playbackQueue: List<SongUiModel> = emptyList(),
+    val playbackQueueEntities: List<SongEntity> = emptyList(),
     val playbackQueueIndex: Int? = null,
     val originalPlaybackQueue: List<SongUiModel> = emptyList(),
     val repeatMode: RepeatMode = RepeatMode.OFF,
@@ -915,6 +1388,7 @@ data class PlaybackState(
     val currentSongId: String? = null,
     val nowPlayingSong: SongUiModel? = null,
     val isPlaybackPlaying: Boolean = false,
+    val isBuffering: Boolean = false,
     val nowPlayingPositionMs: Long = 0L,
     val nowPlayingDurationMs: Long = 0L,
 )

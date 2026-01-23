@@ -1,6 +1,7 @@
 package com.calmapps.calmmusic.playback
 
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import com.calmapps.calmmusic.ui.SongUiModel
 
 /**
@@ -81,7 +82,21 @@ class PlaybackCoordinator {
         appleIndexByGlobal = appleMap
         localIndexByGlobal = localMap
         appleCatalogIdsForQueue = appleList.map { it.audioUri ?: it.id }
-        localMediaItemsForQueue = localList.map { MediaItem.fromUri(it.audioUri!!) }
+
+        localMediaItemsForQueue = localList.map { song ->
+            val metadata = MediaMetadata.Builder()
+                .setTitle(song.title)
+                .setArtist(song.artist)
+                .setAlbumTitle(song.album)
+                .build()
+
+            MediaItem.Builder()
+                .setMediaId(song.id)
+                .setUri(song.audioUri)
+                .setMediaMetadata(metadata)
+                .build()
+        }
+
         appleQueueInitialized = false
         localQueueInitialized = false
     }

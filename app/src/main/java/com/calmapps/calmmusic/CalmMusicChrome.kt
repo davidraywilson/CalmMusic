@@ -23,6 +23,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavDestination
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.navigation.NavDestination.Companion.hierarchy
 import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.PlaylistUiModel
@@ -80,6 +81,7 @@ fun CalmMusicTopAppBar(
     modifier: Modifier = Modifier,
 ) {
     val navRoutes = remember { navItems.map { it.route } }
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     TopAppBarMMD(
         navigationIcon = {
@@ -118,12 +120,20 @@ fun CalmMusicTopAppBar(
                     SearchBarDefaultsMMD.InputField(
                         query = searchQuery,
                         onQueryChange = onSearchQueryChange,
-                        onSearch = { },
+                        onSearch = {
+                            keyboardController?.hide()
+                            onPerformSearchClick()
+                        },
                         expanded = true,
                         onExpandedChange = { },
                         placeholder = { TextMMD("Search") },
                         trailingIcon = {
-                            IconButton(onClick = onPerformSearchClick) {
+                            IconButton(
+                                onClick = {
+                                    keyboardController?.hide()
+                                    onPerformSearchClick()
+                                },
+                            ) {
                                 Icon(
                                     imageVector = Icons.Outlined.Search,
                                     contentDescription = "Search",

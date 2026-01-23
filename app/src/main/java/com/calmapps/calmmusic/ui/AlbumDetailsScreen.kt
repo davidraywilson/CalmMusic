@@ -36,6 +36,7 @@ fun AlbumDetailsScreen(
     viewModel: CalmMusicViewModel,
     onPlaySongClick: (SongUiModel, List<SongUiModel>) -> Unit,
     onShuffleClick: (List<SongUiModel>) -> Unit,
+    librarySongIds: Set<String> = emptySet(),
 ) {
     var songs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -44,7 +45,9 @@ fun AlbumDetailsScreen(
     val playbackState by viewModel.playbackState.collectAsState()
     val currentSongId = playbackState.currentSongId
 
-    LaunchedEffect(album?.id) {
+    val refreshTrigger by viewModel.libraryRefreshTrigger.collectAsState()
+
+    LaunchedEffect(album?.id, album?.sourceType, refreshTrigger) {
         if (album == null) {
             isLoading = false
             return@LaunchedEffect
@@ -52,7 +55,7 @@ fun AlbumDetailsScreen(
         isLoading = true
         errorMessage = null
         try {
-            songs = viewModel.getAlbumSongs(album.id)
+            songs = viewModel.getAlbumSongsForDetails(album)
         } catch (e: Exception) {
             errorMessage = e.message ?: "Failed to load album songs"
         } finally {
@@ -135,6 +138,7 @@ fun AlbumDetailsScreen(
                                 },
                                 showDivider = song != displaySongs.lastOrNull(),
                                 showTrackNumber = true,
+                                isInLibrary = librarySongIds.contains(song.id),
                             )
                         }
                     }

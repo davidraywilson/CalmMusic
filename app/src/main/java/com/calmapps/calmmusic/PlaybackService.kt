@@ -5,16 +5,23 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
-import com.calmapps.calmmusic.data.PlaybackStateManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import androidx.core.net.toUri
 
 /**
  * Media3-based playback service for local music files.
@@ -29,12 +36,7 @@ class PlaybackService : MediaSessionService() {
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "calmmusic_playback_channel"
-
         private var errorCallback: ((PlaybackException) -> Unit)? = null
-
-        fun setErrorCallback(callback: ((PlaybackException) -> Unit)?) {
-            errorCallback = callback
-        }
     }
 
     @OptIn(UnstableApi::class)
@@ -42,17 +44,18 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         createNotificationChannel()
 
-        val player = ExoPlayer.Builder(this).build()
+        val mediaSourceFactory = DefaultMediaSourceFactory(createDataSourceFactory())
 
-        // Configure audio attributes for music content
-        val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
-            .setUsage(androidx.media3.common.C.USAGE_MEDIA)
-            .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MUSIC)
+        val player = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(mediaSourceFactory)
             .build()
-        // Let ExoPlayer manage audio focus
+
+        val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
         player.setAudioAttributes(audioAttributes, true)
 
-        // Pause automatically if headphones are unplugged
         player.setHandleAudioBecomingNoisy(true)
 
         player.addListener(object : Player.Listener {
@@ -70,18 +73,23 @@ class PlaybackService : MediaSessionService() {
                 super.onMediaItemTransition(mediaItem, reason)
                 val meta = mediaItem?.mediaMetadata
                 if (meta != null) {
+                    val uri = mediaItem.localConfiguration?.uri
+                    val inferredSourceType = when (uri?.scheme) {
+                        "content", "file" -> "LOCAL_FILE"
+                        else -> "YOUTUBE"
+                    }
+
                     (application as? CalmMusic)?.playbackStateManager?.updateState(
                         songId = mediaItem.mediaId,
                         title = meta.title?.toString() ?: "Unknown Title",
                         artist = meta.artist?.toString() ?: "Unknown Artist",
                         isPlaying = player.isPlaying,
-                        sourceType = "LOCAL_FILE"
+                        sourceType = inferredSourceType,
                     )
                 }
             }
         })
 
-        // PendingIntent so tapping the notification opens CalmMusic MainActivity
         val sessionActivityIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -104,26 +112,61 @@ class PlaybackService : MediaSessionService() {
         setMediaNotificationProvider(notificationProvider)
     }
 
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "CalmMusic playback"
-            val descriptionText = "Music playback controls"
-            val importance = NotificationManager.IMPORTANCE_LOW
-            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
-                description = descriptionText
+    @OptIn(UnstableApi::class)
+    private fun createDataSourceFactory(): DataSource.Factory {
+        val app = application as CalmMusic
+        val upstreamFactory = DefaultDataSource.Factory(this)
+
+        val resolvingFactory = ResolvingDataSource.Factory(upstreamFactory) { dataSpec ->
+            val uri = dataSpec.uri
+            val scheme = uri.scheme
+            if (scheme == "content" || scheme == "file") {
+                return@Factory dataSpec
             }
-            val notificationManager: NotificationManager =
-                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
+
+            val videoId = dataSpec.key
+                ?: uri.getQueryParameter("v")
+                ?: uri.lastPathSegment
+                ?: return@Factory dataSpec
+
+            val precache = app.youTubePrecacheManager
+            val now = System.currentTimeMillis()
+            val cachedUrl = precache.getCachedUrl(videoId, now)
+
+            if (cachedUrl != null) {
+                return@Factory dataSpec.withUri(cachedUrl.toUri())
+            }
+
+            val resolvedUrl = runBlocking(Dispatchers.IO) {
+                app.youTubeStreamResolver.getBestAudioUrl(videoId)
+            }
+            precache.putUrl(videoId, resolvedUrl, now)
+
+            dataSpec.withUri(resolvedUrl.toUri())
         }
+
+        return CacheDataSource.Factory()
+            .setCache(app.mediaCache)
+            .setUpstreamDataSourceFactory(resolvingFactory)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    }
+
+    private fun createNotificationChannel() {
+        val name = "CalmMusic playback"
+        val descriptionText = "Music playback controls"
+        val importance = NotificationManager.IMPORTANCE_LOW
+        val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+            description = descriptionText
+        }
+        val notificationManager: NotificationManager =
+            getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.createNotificationChannel(channel)
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        mediaSession?.player?.let { player ->
-            if (!player.playWhenReady || player.mediaItemCount == 0) {
-                stopSelf()
-            }
-        }
+        mediaSession?.player?.stop()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
