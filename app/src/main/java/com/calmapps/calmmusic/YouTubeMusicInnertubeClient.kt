@@ -56,7 +56,7 @@ internal class YouTubeMusicInnertubeClientImpl(
     private val httpClient: OkHttpClient,
 ) : YouTubeMusicInnertubeClient {
 
-    private val apiKey: String = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+    private val apiKey: String = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30"
     private val baseUrl: String = "https://youtubei.googleapis.com/youtubei/v1/search?prettyPrint=false&key=$apiKey"
 
     private val pipedBaseUrl: String = "https://pipedapi.kavin.rocks/streams/"
