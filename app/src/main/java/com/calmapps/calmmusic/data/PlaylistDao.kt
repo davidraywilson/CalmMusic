@@ -88,4 +88,12 @@ interface PlaylistDao {
      */
     @Query("UPDATE playlist_tracks SET songId = :newSongId WHERE songId = :oldSongId")
     suspend fun updateSongIdForAllPlaylists(oldSongId: String, newSongId: String)
+
+    /**
+     * Delete all playlist_tracks entries that reference the given song ID,
+     * regardless of playlist. Used when permanently deleting a local file
+     * from disk and library so that no playlists keep dangling references.
+     */
+    @Query("DELETE FROM playlist_tracks WHERE songId = :songId")
+    suspend fun deleteTracksForSongId(songId: String)
 }

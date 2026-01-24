@@ -21,6 +21,7 @@ class YouTubePrecacheManager(private val app: CalmMusic) {
 
     private data class Entry(
         val url: String,
+        val resolverLabel: String?,
         val expiresAtMillis: Long,
     )
 
@@ -46,8 +47,19 @@ class YouTubePrecacheManager(private val app: CalmMusic) {
         }
     }
 
-    fun putUrl(videoId: String, url: String, now: Long = System.currentTimeMillis()) {
-        val entry = Entry(url = url, expiresAtMillis = now + ttlMs)
+    fun getCachedWithLabel(videoId: String, now: Long = System.currentTimeMillis()): Pair<String, String?>? {
+        synchronized(urlCache) {
+            val entry = urlCache[videoId] ?: return null
+            if (entry.expiresAtMillis <= now) {
+                urlCache.remove(videoId)
+                return null
+            }
+            return entry.url to entry.resolverLabel
+        }
+    }
+
+    fun putUrl(videoId: String, url: String, resolverLabel: String?, now: Long = System.currentTimeMillis()) {
+        val entry = Entry(url = url, resolverLabel = resolverLabel, expiresAtMillis = now + ttlMs)
         synchronized(urlCache) {
             urlCache[videoId] = entry
         }
@@ -107,8 +119,12 @@ class YouTubePrecacheManager(private val app: CalmMusic) {
                         return@launch
                     }
 
-                    val url = app.youTubeStreamResolver.getBestAudioUrl(videoId)
-                    putUrl(videoId, url, now)
+                    val (url, resolverLabel) = try {
+                        app.youTubeInnertubeClient.getBestAudioUrl(videoId) to "Innertube/Piped"
+                    } catch (_: Exception) {
+                        app.youTubeStreamResolver.getBestAudioUrl(videoId) to "NewPipe"
+                    }
+                    putUrl(videoId, url, resolverLabel, now)
 
                     prefetchBytesIntoCache(videoId, url)
                 } catch (_: Exception) {

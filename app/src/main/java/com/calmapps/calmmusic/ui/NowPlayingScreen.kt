@@ -77,6 +77,7 @@ fun NowPlayingScreen(
     onAddToLibraryClick: () -> Unit = {},
     isInLibrary: Boolean = false,
     sourceType: String? = null,
+    streamResolverLabel: String? = null,
 ) {
     Column(
         modifier = Modifier
@@ -357,7 +358,7 @@ fun NowPlayingScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            val isLocal = sourceType == "LOCAL_FILE"
+            val isLocal = sourceType == "LOCAL_FILE" || sourceType == "YOUTUBE_DOWNLOAD"
             if (!isLocal) {
                 Box(
                     modifier = Modifier
@@ -376,6 +377,17 @@ fun NowPlayingScreen(
                             modifier = Modifier.size(20.dp),
                             tint = MaterialTheme.colorScheme.surface
                         )
+
+                        if (!streamResolverLabel.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = streamResolverLabel,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.surface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
 
                         if (isInLibrary) {
                             Spacer(modifier = Modifier.width(12.dp))
@@ -427,6 +439,7 @@ private fun NowPlayingScreenPreview() {
         canAddToLibrary = false,
         onAddToLibraryClick = {},
         isInLibrary = true,
-        sourceType = "YOUTUBE"
+        sourceType = "YOUTUBE",
+        streamResolverLabel = "Innertube/Piped",
     )
 }

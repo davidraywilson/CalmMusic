@@ -131,16 +131,23 @@ class PlaybackService : MediaSessionService() {
 
             val precache = app.youTubePrecacheManager
             val now = System.currentTimeMillis()
-            val cachedUrl = precache.getCachedUrl(videoId, now)
+            val cached = precache.getCachedWithLabel(videoId, now)
 
-            if (cachedUrl != null) {
+            if (cached != null) {
+                val (cachedUrl, cachedLabel) = cached
+                app.playbackStateManager.updateStreamResolverLabel(cachedLabel)
                 return@Factory dataSpec.withUri(cachedUrl.toUri())
             }
 
-            val resolvedUrl = runBlocking(Dispatchers.IO) {
-                app.youTubeStreamResolver.getBestAudioUrl(videoId)
+            val (resolvedUrl, resolverLabel) = runBlocking(Dispatchers.IO) {
+                try {
+                    app.youTubeInnertubeClient.getBestAudioUrl(videoId) to "Innertube/Piped"
+                } catch (_: Exception) {
+                    app.youTubeStreamResolver.getBestAudioUrl(videoId) to "NewPipe"
+                }
             }
-            precache.putUrl(videoId, resolvedUrl, now)
+            precache.putUrl(videoId, resolvedUrl, resolverLabel, now)
+            app.playbackStateManager.updateStreamResolverLabel(resolverLabel)
 
             dataSpec.withUri(resolvedUrl.toUri())
         }

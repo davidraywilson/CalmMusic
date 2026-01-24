@@ -60,7 +60,7 @@ fun SongItem(
         song.durationText,
         song.sourceType,
     ) {
-        val local = song.sourceType == "LOCAL_FILE"
+        val local = song.sourceType == "LOCAL_FILE" || song.sourceType == "YOUTUBE_DOWNLOAD"
         val fileExtension = if (local) {
             val uriString = song.audioUri ?: song.id
             try {

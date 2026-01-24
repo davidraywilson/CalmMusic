@@ -66,7 +66,7 @@ class PlaybackCoordinator {
                     appleCounter++
                 }
 
-                "LOCAL_FILE" -> {
+                "LOCAL_FILE", "YOUTUBE_DOWNLOAD" -> {
                     val uri = song.audioUri
                     if (!uri.isNullOrBlank()) {
                         localMap[globalIndex] = localCounter

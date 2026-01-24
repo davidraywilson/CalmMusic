@@ -115,7 +115,7 @@ private fun SelectableSongItem(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                val isLocal = song.sourceType == "LOCAL_FILE"
+                val isLocal = song.sourceType == "LOCAL_FILE" || song.sourceType == "YOUTUBE_DOWNLOAD"
                 val fileExtension = if (isLocal) {
                     val uriString = song.audioUri ?: song.id
                     try {

@@ -11,6 +11,7 @@ data class OverlayState(
     val artist: String = "",
     val isPlaying: Boolean = false,
     val sourceType: String? = null,
+    val streamResolverLabel: String? = null,
     val isAppInForeground: Boolean = true // Default to true so overlay starts hidden
 )
 
@@ -29,7 +30,8 @@ class PlaybackStateManager {
         title: String,
         artist: String,
         isPlaying: Boolean,
-        sourceType: String?
+        sourceType: String?,
+        streamResolverLabel: String? = null,
     ) {
         // Preserve existing foreground state when updating song info
         val current = _state.value
@@ -39,9 +41,16 @@ class PlaybackStateManager {
             artist = artist,
             isPlaying = isPlaying,
             sourceType = sourceType,
+            streamResolverLabel = streamResolverLabel ?: current.streamResolverLabel,
         )
         if (newState == current) return
         _state.value = newState
+    }
+
+    fun updateStreamResolverLabel(label: String?) {
+        val current = _state.value
+        if (current.streamResolverLabel == label) return
+        _state.value = current.copy(streamResolverLabel = label)
     }
 
     fun updatePlaybackStatus(isPlaying: Boolean) {
@@ -59,12 +68,13 @@ class PlaybackStateManager {
     fun updateFromQueueIndex(index: Int) {
         if (index in currentQueue.indices) {
             val song = currentQueue[index]
-            updateState(
+                updateState(
                 songId = song.id,
                 title = song.title,
                 artist = song.artist,
                 isPlaying = true,
-                sourceType = song.sourceType
+                sourceType = song.sourceType,
+                streamResolverLabel = null,
             )
         }
     }
@@ -87,6 +97,7 @@ class PlaybackStateManager {
             artist = "",
             isPlaying = false,
             sourceType = null,
+            streamResolverLabel = null,
         )
     }
 }

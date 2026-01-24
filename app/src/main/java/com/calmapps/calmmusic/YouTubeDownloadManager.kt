@@ -85,22 +85,29 @@ class YouTubeDownloadManager(
 
             updateDownload(id) { it.copy(state = YouTubeDownloadStatus.State.IN_PROGRESS) }
 
-            val ok = performYouTubeDownloadInternal(
-                app = app,
-                song = song,
-                targetDir = musicDir,
-                context = context,
-                client = client,
-                onProgress = { progress ->
-                    updateDownload(id) { status -> status.copy(progress = progress.coerceIn(0f, 1f)) }
-                },
-            )
+            var errorMessage: String? = null
+            val ok = try {
+                performYouTubeDownloadInternal(
+                    app = app,
+                    song = song,
+                    targetDir = musicDir,
+                    context = context,
+                    client = client,
+                    onProgress = { progress ->
+                        updateDownload(id) { status -> status.copy(progress = progress.coerceIn(0f, 1f)) }
+                    },
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+                errorMessage = e.message ?: e.javaClass.simpleName ?: "Unknown error"
+                false
+            }
 
             updateDownload(id) { status ->
                 status.copy(
                     progress = if (ok) 1f else status.progress,
                     state = if (ok) YouTubeDownloadStatus.State.COMPLETED else YouTubeDownloadStatus.State.FAILED,
-                    errorMessage = if (ok) null else status.errorMessage,
+                    errorMessage = if (ok) null else (errorMessage ?: status.errorMessage ?: "Unknown error"),
                 )
             }
         }
@@ -142,11 +149,18 @@ internal suspend fun performYouTubeDownloadInternal(
     onProgress: (Float) -> Unit,
 ): Boolean {
     var tmpFile: File? = null
-    return try {
+    try {
         val videoId = song.id
 
+        // Prefer the Innertube/Piped-based client for download URLs, since
+        // some videos intermittently cause NewPipe to throw "The page needs
+        // to be reloaded". Fall back to NewPipe only if Piped fails.
         val streamUrl = withContext(Dispatchers.IO) {
-            app.youTubeStreamResolver.getDownloadAudioUrl(videoId)
+            try {
+                app.youTubeInnertubeClient.getBestAudioUrl(videoId)
+            } catch (_: Exception) {
+                app.youTubeStreamResolver.getDownloadAudioUrl(videoId)
+            }
         }
 
         val safeTitle = (song.title.ifBlank { videoId })
@@ -254,10 +268,21 @@ internal suspend fun performYouTubeDownloadInternal(
 
         if (!downloadSuccess) return false
 
+        // First copy the fully-downloaded temp file into the final target file
+        // location, then write tags directly into the final file so that future
+        // scans (e.g., after a cold start) see complete metadata.
+        withContext(Dispatchers.IO) {
+            FileInputStream(tmpFile).use { input ->
+                FileOutputStream(targetFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+        }
+
         withContext(Dispatchers.IO) {
             try {
                 TagOptionSingleton.getInstance().isAndroid = true
-                val audioFile = AudioFileIO.read(tmpFile)
+                val audioFile = AudioFileIO.read(targetFile)
                 val tag = audioFile.tagAndConvertOrCreateAndSetDefault
 
                 tag.setField(FieldKey.TITLE, song.title)
@@ -276,94 +301,89 @@ internal suspend fun performYouTubeDownloadInternal(
             }
         }
 
-        withContext(Dispatchers.IO) {
-            FileInputStream(tmpFile).use { input ->
-                FileOutputStream(targetFile).use { output ->
-                    input.copyTo(output)
-                }
-            }
-        }
-
         onProgress(1f)
 
         withContext(Dispatchers.IO) {
-            val settings = app.settingsManager
-            if (!settings.includeLocalMusic.value) {
-                settings.setIncludeLocalMusic(true)
-            }
-            val database = CalmMusicDatabase.getDatabase(app)
-            val songDao = database.songDao()
-            val albumDao = database.albumDao()
-            val artistDao = database.artistDao()
-            val playlistDao = database.playlistDao()
+            try {
+                val settings = app.settingsManager
+                if (!settings.includeLocalMusic.value) {
+                    settings.setIncludeLocalMusic(true)
+                }
+                val database = CalmMusicDatabase.getDatabase(app)
+                val songDao = database.songDao()
+                val albumDao = database.albumDao()
+                val artistDao = database.artistDao()
+                val playlistDao = database.playlistDao()
 
-            val fileUri = android.net.Uri.fromFile(targetFile)
-            val fileUriString = fileUri.toString()
-            val localLastModified = targetFile.lastModified()
-            val localSize = targetFile.length()
+                val fileUri = android.net.Uri.fromFile(targetFile)
+                val fileUriString = fileUri.toString()
+                val localLastModified = targetFile.lastModified()
+                val localSize = targetFile.length()
 
-            val existingStreamingEntity = SongEntity(
-                id = videoId,
-                title = song.title,
-                artist = song.artist,
-                album = song.album,
-                albumId = null,
-                discNumber = song.discNumber,
-                trackNumber = song.trackNumber,
-                durationMillis = song.durationMillis,
-                sourceType = "YOUTUBE",
-                audioUri = song.audioUri ?: videoId,
-                artistId = null,
-                releaseYear = null,
-                localLastModifiedMillis = null,
-                localFileSizeBytes = null,
-            )
-
-            val localSongEntity = LocalMusicScanner.buildSongEntityFromFile(
-                context = context,
-                uri = fileUri,
-                name = targetFile.name,
-                lastModified = localLastModified,
-                fileSize = localSize,
-                existing = existingStreamingEntity,
-            )
-
-            val artistId = localSongEntity.artistId
-            val albumId = localSongEntity.albumId
-            val displayArtistName = localSongEntity.artist
-            val displayAlbumName = localSongEntity.album
-
-            if (artistId != null && displayArtistName.isNotBlank()) {
-                val artistEntity = ArtistEntity(
-                    id = artistId,
-                    name = displayArtistName,
-                    sourceType = "LOCAL_FILE"
+                val existingStreamingEntity = SongEntity(
+                    id = videoId,
+                    title = song.title,
+                    artist = song.artist,
+                    album = song.album,
+                    albumId = null,
+                    discNumber = song.discNumber,
+                    trackNumber = song.trackNumber,
+                    durationMillis = song.durationMillis,
+                    sourceType = "YOUTUBE",
+                    audioUri = song.audioUri ?: videoId,
+                    artistId = null,
+                    releaseYear = null,
+                    localLastModifiedMillis = null,
+                    localFileSizeBytes = null,
                 )
-                artistDao.upsertAll(listOf(artistEntity))
-            }
 
-            if (albumId != null && displayAlbumName != null) {
-                val albumEntity = AlbumEntity(
-                    id = albumId,
-                    name = displayAlbumName,
-                    artist = displayArtistName.takeIf { it.isNotBlank() },
-                    sourceType = "LOCAL_FILE",
-                    artistId = artistId,
+                val rawLocalSongEntity = LocalMusicScanner.buildSongEntityFromFile(
+                    context = context,
+                    uri = fileUri,
+                    name = targetFile.name,
+                    lastModified = localLastModified,
+                    fileSize = localSize,
+                    existing = existingStreamingEntity,
                 )
-                albumDao.upsertAll(listOf(albumEntity))
-            }
+                val localSongEntity = rawLocalSongEntity.copy(sourceType = "YOUTUBE_DOWNLOAD")
 
-            songDao.upsertAll(listOf(localSongEntity))
-            playlistDao.updateSongIdForAllPlaylists(oldSongId = videoId, newSongId = fileUriString)
+                val artistId = localSongEntity.artistId
+                val albumId = localSongEntity.albumId
+                val displayArtistName = localSongEntity.artist
+                val displayAlbumName = localSongEntity.album
 
-            if (localSongEntity.id != videoId) {
-                songDao.deleteByIds(listOf(videoId))
+                if (artistId != null && displayArtistName.isNotBlank()) {
+                    val artistEntity = ArtistEntity(
+                        id = artistId,
+                        name = displayArtistName,
+                        sourceType = "YOUTUBE_DOWNLOAD",
+                    )
+                    artistDao.upsertAll(listOf(artistEntity))
+                }
+
+                if (albumId != null && displayAlbumName != null) {
+                    val albumEntity = AlbumEntity(
+                        id = albumId,
+                        name = displayAlbumName,
+                        artist = displayArtistName.takeIf { it.isNotBlank() },
+                        sourceType = "YOUTUBE_DOWNLOAD",
+                        artistId = artistId,
+                    )
+                    albumDao.upsertAll(listOf(albumEntity))
+                }
+
+                songDao.upsertAll(listOf(localSongEntity))
+                playlistDao.updateSongIdForAllPlaylists(oldSongId = videoId, newSongId = fileUriString)
+
+                if (localSongEntity.id != videoId) {
+                    songDao.deleteByIds(listOf(videoId))
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
 
-        true
-    } catch (_: Exception) {
-        false
+        return true
     } finally {
         tmpFile?.delete()
     }

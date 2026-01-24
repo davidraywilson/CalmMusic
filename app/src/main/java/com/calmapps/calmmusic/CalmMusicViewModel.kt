@@ -3,6 +3,7 @@ package com.calmapps.calmmusic
 import android.app.Application
 import android.net.Uri
 import androidx.annotation.OptIn
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -99,7 +100,7 @@ class CalmMusicViewModel(
             val oldSong = queue[indexInQueue]
 
             val newLocalSong = library.find { candidate ->
-                if (candidate.sourceType != "LOCAL_FILE") return@find false
+                if (candidate.sourceType != "LOCAL_FILE" && candidate.sourceType != "YOUTUBE_DOWNLOAD") return@find false
 
                 if (areSongsMatching(candidate, oldSong)) return@find true
 
@@ -407,7 +408,7 @@ class CalmMusicViewModel(
 
             val needsInit = when (song.sourceType) {
                 "APPLE_MUSIC" -> !playbackCoordinator.appleQueueInitialized
-                "LOCAL_FILE", "YOUTUBE" -> !playbackCoordinator.localQueueInitialized
+                "LOCAL_FILE", "YOUTUBE", "YOUTUBE_DOWNLOAD" -> !playbackCoordinator.localQueueInitialized
                 else -> false
             }
 
@@ -477,7 +478,7 @@ class CalmMusicViewModel(
         val repeatMode = previous.repeatMode
 
         val queueEntities = queue.map { it.toQueueEntity() }
-        val shouldShowInitialBuffering = song.sourceType != "LOCAL_FILE"
+        val shouldShowInitialBuffering = song.sourceType != "LOCAL_FILE" && song.sourceType != "YOUTUBE_DOWNLOAD"
 
         val newState = previous.copy(
             playbackQueue = queue,
@@ -517,15 +518,20 @@ class CalmMusicViewModel(
                 RepeatMode.ONE -> PlaybackRepeatMode.REPEAT_MODE_ONE
             }
             app.mediaPlayerController.setRepeatMode(repeat)
-        } else if (song.sourceType == "LOCAL_FILE") {
+        } else if (song.sourceType == "LOCAL_FILE" || song.sourceType == "YOUTUBE_DOWNLOAD") {
             val controller = localController
             if (controller != null && playbackCoordinator.localMediaItemsForQueue.isNotEmpty()) {
 
                 // IMPORTANT: Segmented Playback Logic
-                // We identify the contiguous segment of local files starting from startIndex.
-                // This prevents the player from auto-advancing into "gaps" where a YouTube song should be.
+                // We identify the contiguous segment of local media (LOCAL_FILE or
+                // YOUTUBE_DOWNLOAD) starting from startIndex. This prevents the
+                // player from auto-advancing into "gaps" where a streaming
+                // YouTube song should be.
                 var segmentEndIndex = startIndex
-                while (segmentEndIndex < queue.size && queue[segmentEndIndex].sourceType == "LOCAL_FILE") {
+                while (segmentEndIndex < queue.size &&
+                    (queue[segmentEndIndex].sourceType == "LOCAL_FILE" ||
+                        queue[segmentEndIndex].sourceType == "YOUTUBE_DOWNLOAD")
+                ) {
                     segmentEndIndex++
                 }
 
@@ -600,7 +606,7 @@ class CalmMusicViewModel(
         }
 
         val nextSong = queue[targetIndex]
-        val shouldShowBuffering = nextSong.sourceType != "LOCAL_FILE"
+        val shouldShowBuffering = nextSong.sourceType != "LOCAL_FILE" && nextSong.sourceType != "YOUTUBE_DOWNLOAD"
 
         _playbackState.value = state.copy(
             playbackQueueIndex = targetIndex,
@@ -637,7 +643,7 @@ class CalmMusicViewModel(
         }
 
         val prevSong = queue[targetIndex]
-        val shouldShowBuffering = prevSong.sourceType != "LOCAL_FILE"
+        val shouldShowBuffering = prevSong.sourceType != "LOCAL_FILE" && prevSong.sourceType != "YOUTUBE_DOWNLOAD"
 
         _playbackState.value = state.copy(
             playbackQueueIndex = targetIndex,
@@ -683,7 +689,7 @@ class CalmMusicViewModel(
             _playbackState.value = newState
             persistPlaybackSnapshot(newState)
 
-            if (current.sourceType == "LOCAL_FILE") {
+            if (current.sourceType == "LOCAL_FILE" || current.sourceType == "YOUTUBE_DOWNLOAD") {
                 startPlaybackFromQueue(
                     queue = newQueue,
                     startIndex = 0,
@@ -720,7 +726,7 @@ class CalmMusicViewModel(
             _playbackState.value = newState
             persistPlaybackSnapshot(newState)
 
-            if (restoredCurrent.sourceType == "LOCAL_FILE") {
+            if (restoredCurrent.sourceType == "LOCAL_FILE" || restoredCurrent.sourceType == "YOUTUBE_DOWNLOAD") {
                 startPlaybackFromQueue(
                     queue = restoreQueue,
                     startIndex = originalIndex,
@@ -744,7 +750,7 @@ class CalmMusicViewModel(
         persistPlaybackSnapshot()
 
         val song = state.nowPlayingSong
-        if (song?.sourceType == "LOCAL_FILE") {
+        if (song?.sourceType == "LOCAL_FILE" || song?.sourceType == "YOUTUBE_DOWNLOAD") {
             localController?.let { controller ->
                 controller.repeatMode = when (newRepeat) {
                     RepeatMode.ONE -> Player.REPEAT_MODE_ONE
@@ -866,7 +872,7 @@ class CalmMusicViewModel(
             while (true) {
                 val state = _playbackState.value
                 val currentSong = state.nowPlayingSong
-                val isLocalFile = currentSong?.sourceType == "LOCAL_FILE"
+                val isLocalFile = currentSong?.sourceType == "LOCAL_FILE" || currentSong?.sourceType == "YOUTUBE_DOWNLOAD"
                 val isYouTube = currentSong?.sourceType == "YOUTUBE"
                 var didAutoAdvance = false
 
@@ -904,7 +910,7 @@ class CalmMusicViewModel(
                             var targetGlobalIndex = -1
 
                             for (i in globalStartIndex until queue.size) {
-                                if (queue[i].sourceType == "LOCAL_FILE") {
+                                if (queue[i].sourceType == "LOCAL_FILE" || queue[i].sourceType == "YOUTUBE_DOWNLOAD") {
                                     foundCount++
                                 }
                                 if (foundCount == delta) {
@@ -1138,6 +1144,65 @@ class CalmMusicViewModel(
         }
     }
 
+    /**
+     * Permanently delete a LOCAL_FILE or YOUTUBE_DOWNLOAD song, including its
+     * underlying file and any playlist memberships. Returns true if the
+     * database was updated successfully (file deletion best-effort).
+     */
+    suspend fun deleteLocalMediaSong(song: SongUiModel): Boolean {
+        if (song.sourceType != "LOCAL_FILE" && song.sourceType != "YOUTUBE_DOWNLOAD") return false
+
+        return try {
+            withContext(Dispatchers.IO) {
+                val uriString = song.audioUri ?: song.id
+                if (uriString.isNotBlank()) {
+                    try {
+                        val uri = Uri.parse(uriString)
+                        if (song.sourceType == "YOUTUBE_DOWNLOAD") {
+                            // Downloads live under app-specific storage and are usually file:// URIs.
+                            if (uri.scheme == null || uri.scheme == "file") {
+                                uri.path?.let { path ->
+                                    try {
+                                        java.io.File(path).delete()
+                                    } catch (_: Exception) {
+                                    }
+                                }
+                            } else {
+                                try {
+                                    DocumentFile.fromSingleUri(app, uri)?.delete()
+                                } catch (_: Exception) {
+                                }
+                            }
+                        } else {
+                            try {
+                                DocumentFile.fromSingleUri(app, uri)?.delete()
+                            } catch (_: Exception) {
+                                if (uri.scheme == null || uri.scheme == "file") {
+                                    uri.path?.let { path ->
+                                        try {
+                                            java.io.File(path).delete()
+                                        } catch (_: Exception) {
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+
+                // Remove from all playlists and from the songs table.
+                playlistDao.deleteTracksForSongId(song.id)
+                songDao.deleteByIds(listOf(song.id))
+            }
+
+            refreshLibraryFromDatabase()
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     suspend fun refreshLibraryFromDatabase() {
         try {
             val (allSongs, allAlbums) = withContext(Dispatchers.IO) {
@@ -1237,6 +1302,10 @@ class CalmMusicViewModel(
 
     init {
         viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                libraryRepository.ingestAppDownloadsIfMissing()
+            }
+
             val allSongs = withContext(Dispatchers.IO) { songDao.getAllSongs() }
             val allAlbums = withContext(Dispatchers.IO) { albumDao.getAllAlbums() }
             val allArtistsWithCounts = withContext(Dispatchers.IO) { artistDao.getAllArtistsWithCounts() }

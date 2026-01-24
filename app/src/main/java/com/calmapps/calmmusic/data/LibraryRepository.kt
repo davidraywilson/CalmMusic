@@ -1,5 +1,7 @@
 package com.calmapps.calmmusic.data
 
+import android.net.Uri
+import android.os.Environment
 import com.calmapps.calmmusic.CalmMusic
 import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.ArtistUiModel
@@ -288,6 +290,42 @@ class LibraryRepository(
                 errorMessage = message,
                 stats = null,
             )
+        }
+    }
+
+    suspend fun ingestAppDownloadsIfMissing(): Int {
+        return withContext(Dispatchers.IO) {
+            val downloadsDir = app.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: return@withContext 0
+            val files = downloadsDir.listFiles()?.filter { it.isFile } ?: emptyList()
+            if (files.isEmpty()) return@withContext 0
+
+            val existingDownloads = songDao.getSongsBySourceType("YOUTUBE_DOWNLOAD")
+            val existingByUri = existingDownloads.associateBy { it.audioUri }
+
+            val toInsert = mutableListOf<SongEntity>()
+
+            for (file in files) {
+                val uri = Uri.fromFile(file)
+                val uriString = uri.toString()
+                if (existingByUri.containsKey(uriString)) continue
+
+                val baseEntity = LocalMusicScanner.buildSongEntityFromFile(
+                    context = app,
+                    uri = uri,
+                    name = file.name,
+                    lastModified = file.lastModified(),
+                    fileSize = file.length(),
+                    existing = null,
+                )
+
+                toInsert += baseEntity.copy(sourceType = "YOUTUBE_DOWNLOAD")
+            }
+
+            if (toInsert.isNotEmpty()) {
+                songDao.upsertAll(toInsert)
+            }
+
+            toInsert.size
         }
     }
 

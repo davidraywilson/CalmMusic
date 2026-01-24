@@ -258,6 +258,8 @@ fun CalmMusic(app: CalmMusic) {
 
     val playlistsViewModel: PlaylistsViewModel = viewModel(factory = PlaylistsViewModel.factory(app))
 
+    val overlayState by app.playbackStateManager.state.collectAsState()
+
     // Bottom sheet states
     val addToPlaylistSheetState: SheetStateMMD = rememberModalBottomSheetMMDState(
         skipPartiallyExpanded = true,
@@ -504,7 +506,7 @@ fun CalmMusic(app: CalmMusic) {
         val song = queue[startIndex]
         val controller = localMediaController
 
-        val needsLocalController = song.sourceType == "LOCAL_FILE" || song.sourceType == "YOUTUBE"
+        val needsLocalController = song.sourceType == "LOCAL_FILE" || song.sourceType == "YOUTUBE" || song.sourceType == "YOUTUBE_DOWNLOAD"
         if (needsLocalController && controller == null) {
             libraryScope.launch {
                 snackbarHostState.showSnackbar(
@@ -598,25 +600,41 @@ fun CalmMusic(app: CalmMusic) {
     }
 
     val onDelete: (SongUiModel) -> Unit = { song ->
-        if (song.sourceType == "YOUTUBE") {
-            val download = downloadStatuses.find { it.songId == song.id }
-            if (download != null) {
-                app.youTubeDownloadManager.cancelDownload(download.id)
-                libraryScope.launch {
+        libraryScope.launch {
+            when (song.sourceType) {
+                "YOUTUBE" -> {
+                    val download = downloadStatuses.find { it.songId == song.id }
+                    if (download != null) {
+                        app.youTubeDownloadManager.cancelDownload(download.id)
+                        snackbarHostState.showSnackbar(
+                            message = "Deleting download...",
+                            withDismissAction = false,
+                            duration = SnackbarDurationMMD.Short,
+                        )
+                    }
+                }
+
+                "LOCAL_FILE", "YOUTUBE_DOWNLOAD" -> {
+                    val success = try {
+                        viewModel.deleteLocalMediaSong(song)
+                    } catch (_: Exception) {
+                        false
+                    }
+
                     snackbarHostState.showSnackbar(
-                        message = "Deleting download...",
+                        message = if (success) "Deleted file" else "Couldn't delete file",
                         withDismissAction = false,
                         duration = SnackbarDurationMMD.Short,
                     )
                 }
-            }
-        } else {
-            libraryScope.launch {
-                snackbarHostState.showSnackbar(
-                    message = "Cannot delete local files",
-                    withDismissAction = false,
-                    duration = SnackbarDurationMMD.Short,
-                )
+
+                else -> {
+                    snackbarHostState.showSnackbar(
+                        message = "Cannot delete this source type",
+                        withDismissAction = false,
+                        duration = SnackbarDurationMMD.Short,
+                    )
+                }
             }
         }
     }
@@ -1346,7 +1364,7 @@ fun CalmMusic(app: CalmMusic) {
                 else -> 0L
             }
 
-            val isLocalVideo = if (song.sourceType == "LOCAL_FILE") {
+            val isLocalVideo = if (song.sourceType == "LOCAL_FILE" || song.sourceType == "YOUTUBE_DOWNLOAD") {
                 val uriString = song.audioUri ?: song.id
                 try {
                     val lastSegment = uriString.toUri().lastPathSegment ?: ""
@@ -1364,7 +1382,7 @@ fun CalmMusic(app: CalmMusic) {
 
             NowPlayingScreen(
                 title = song.title,
-                artist = song.artist.ifBlank { if (song.sourceType == "LOCAL_FILE") "Local file" else "" },
+                artist = song.artist.ifBlank { if (song.sourceType == "LOCAL_FILE" || song.sourceType == "YOUTUBE_DOWNLOAD") "Local file" else "" },
                 album = song.album,
                 isPlaying = playbackState.isPlaybackPlaying,
                 isLoading = playbackState.isBuffering,
@@ -1375,7 +1393,7 @@ fun CalmMusic(app: CalmMusic) {
                 onPlayPauseClick = { togglePlayback() },
                 onSeek = { positionMs ->
                     when (song.sourceType) {
-                        "LOCAL_FILE", "YOUTUBE" -> {
+                        "LOCAL_FILE", "YOUTUBE", "YOUTUBE_DOWNLOAD" -> {
                             localMediaController?.seekTo(positionMs)
                         }
                     }
@@ -1438,6 +1456,7 @@ fun CalmMusic(app: CalmMusic) {
                 },
                 isInLibrary = isInLibrary,
                 sourceType = song.sourceType,
+                streamResolverLabel = if (song.sourceType == "YOUTUBE") overlayState.streamResolverLabel else null,
             )
         }
 
