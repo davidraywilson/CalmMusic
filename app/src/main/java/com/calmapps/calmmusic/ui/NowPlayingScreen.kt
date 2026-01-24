@@ -378,16 +378,16 @@ fun NowPlayingScreen(
                             tint = MaterialTheme.colorScheme.surface
                         )
 
-                        if (!streamResolverLabel.isNullOrBlank()) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = streamResolverLabel,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.surface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+//                        if (!streamResolverLabel.isNullOrBlank()) {
+//                            Spacer(modifier = Modifier.width(6.dp))
+//                            Text(
+//                                text = streamResolverLabel,
+//                                fontSize = 12.sp,
+//                                color = MaterialTheme.colorScheme.surface,
+//                                maxLines = 1,
+//                                overflow = TextOverflow.Ellipsis,
+//                            )
+//                        }
 
                         if (isInLibrary) {
                             Spacer(modifier = Modifier.width(12.dp))
