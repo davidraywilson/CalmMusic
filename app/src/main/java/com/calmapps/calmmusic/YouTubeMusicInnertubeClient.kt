@@ -59,7 +59,8 @@ internal class YouTubeMusicInnertubeClientImpl(
     private val apiKey: String = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30"
     private val baseUrl: String = "https://youtubei.googleapis.com/youtubei/v1/search?prettyPrint=false&key=$apiKey"
 
-    private val pipedBaseUrl: String = "https://pipedapi.kavin.rocks/streams/"
+    // private val pipedBaseUrl: String = "https://pipedapi.kavin.rocks/streams/"
+    private val pipedBaseUrl: String = "https://api.piped.io/streams/"
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 

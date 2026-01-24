@@ -1,6 +1,7 @@
 package com.calmapps.calmmusic
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
@@ -12,21 +13,22 @@ import org.schabi.newpipe.extractor.exceptions.ExtractionException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.localization.Localization
 import org.schabi.newpipe.extractor.services.youtube.YoutubeService
+import java.io.IOException
 
 /**
  * Resolves a playable audio URL for a YouTube video (by videoId) using
- * NewPipe Extractor. This keeps the rest of the app unaware of NewPipe
- * specifics and exposes a simple suspend function.
+ * NewPipe Extractor.
  */
 class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
 
     init {
-        // Initialize NewPipe once with an OkHttp-backed Downloader.
         ensureInitialized(client)
     }
 
     companion object {
-        private const val USER_AGENT: String = "Mozilla/5.0 (Windows NT 10.0; rv:78.0) Gecko/20100101 Firefox/78.0"
+        private const val USER_AGENT: String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+
+        private const val MAGIC_COOKIES: String = "SOCS=CAI; VISITOR_INFO1_LIVE=i7Sm6Qgj0lE; CONSENT=YES+cb.20210328-17-p0.en+FX+475; PREF=tz=UTC&hl=en"
 
         @Volatile
         private var initialized: Boolean = false
@@ -35,7 +37,8 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
             if (!initialized) {
                 synchronized(this) {
                     if (!initialized) {
-                        NewPipe.init(OkHttpDownloader(client), Localization.DEFAULT)
+                        val localization = Localization("US", "en")
+                        NewPipe.init(OkHttpDownloader(client), localization)
                         initialized = true
                     }
                 }
@@ -43,53 +46,58 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
         }
     }
 
-    /**
-     * Resolve the best available audio stream URL for the given [videoId].
-     * This is intended for playback, so it prefers the highest available
-     * bitrate.
-     */
     suspend fun getBestAudioUrl(videoId: String): String =
-        getAudioUrl(videoId = videoId, maxBitrateKbps = null)
+        getAudioUrlWithRetry(videoId = videoId, maxBitrateKbps = null)
 
-    /**
-     * Resolve a download-friendly audio stream URL for [videoId], capping the
-     * bitrate to keep file sizes reasonable (and reduce download time) while
-     * still preferring higher-quality streams within that cap.
-     */
     suspend fun getDownloadAudioUrl(videoId: String, maxBitrateKbps: Int = 160): String =
-        getAudioUrl(videoId = videoId, maxBitrateKbps = maxBitrateKbps)
+        getAudioUrlWithRetry(videoId = videoId, maxBitrateKbps = maxBitrateKbps)
+
+    private suspend fun getAudioUrlWithRetry(videoId: String, maxBitrateKbps: Int?): String {
+        var lastException: Exception? = null
+        // is often temporary or clears up on a fresh connection attempt.
+        repeat(3) { attempt ->
+            try {
+                return getAudioUrl(videoId, maxBitrateKbps)
+            } catch (e: Exception) {
+                lastException = e
+                val msg = e.message ?: ""
+                if (msg.contains("reloaded", ignoreCase = true) ||
+                    msg.contains("ContentNotAvailable", ignoreCase = true)) {
+                    delay(500L * (attempt + 1))
+                } else {
+                    throw e
+                }
+            }
+        }
+        throw lastException ?: ExtractionException("Failed to resolve audio after retries")
+    }
 
     private suspend fun getAudioUrl(videoId: String, maxBitrateKbps: Int?): String =
         withContext(Dispatchers.IO) {
             val url = "https://www.youtube.com/watch?v=$videoId"
-            try {
-                val service = NewPipe.getServiceByUrl(url) as YoutubeService
-                val streamInfo = service.getStreamExtractor(url).apply { fetchPage() }
 
-                val audioStreams = streamInfo.audioStreams
-                if (audioStreams.isEmpty()) error("No audio streams")
+            // Ensure initialization (safe to call multiple times)
+            ensureInitialized(client)
 
-                val candidates = audioStreams.filter { it.averageBitrate > 0 }
-                if (candidates.isEmpty()) error("No audio streams with bitrate")
+            val service = NewPipe.getServiceByUrl(url) as YoutubeService
+            val streamInfo = service.getStreamExtractor(url).apply { fetchPage() }
 
-                val chosen = if (maxBitrateKbps == null) {
-                    // Playback: highest available bitrate
-                    candidates.maxByOrNull { it.averageBitrate }!!
-                } else {
-                    // Downloads: try to pick the highest bitrate <= cap; if none,
-                    // fall back to absolute highest.
-                    val capped = candidates.filter { it.averageBitrate <= maxBitrateKbps * 1000 }
-                    (capped.maxByOrNull { it.averageBitrate }
-                        ?: candidates.maxByOrNull { it.averageBitrate }
-                        ?: candidates.first())
-                }
+            val audioStreams = streamInfo.audioStreams
+            if (audioStreams.isEmpty()) error("No audio streams found")
 
-                chosen.url ?: error("No URL for chosen audio stream")
-            } catch (e: ExtractionException) {
-                throw e
-            } catch (e: Exception) {
-                throw e
+            val candidates = audioStreams.filter { it.averageBitrate > 0 }
+            if (candidates.isEmpty()) error("No audio streams with valid bitrate")
+
+            val chosen = if (maxBitrateKbps == null) {
+                candidates.maxByOrNull { it.averageBitrate }!!
+            } else {
+                val capped = candidates.filter { it.averageBitrate <= maxBitrateKbps * 1000 }
+                (capped.maxByOrNull { it.averageBitrate }
+                    ?: candidates.maxByOrNull { it.averageBitrate }
+                    ?: candidates.first())
             }
+
+            chosen.url ?: error("No URL for chosen audio stream")
         }
 
     private class OkHttpDownloader(private val client: OkHttpClient) : Downloader() {
@@ -108,10 +116,19 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
             val builder = okhttp3.Request.Builder()
                 .method(httpMethod, requestBody)
                 .url(url)
-                .addHeader("User-Agent", USER_AGENT)
+                // Always overwrite these three headers to ensure the "Magic" bypass works
+                .header("User-Agent", USER_AGENT)
+                .header("Cookie", MAGIC_COOKIES)
+                .header("Referer", "https://www.youtube.com/")
 
-            // Copy headers from NewPipe request
+            // Copy other headers from NewPipe, but skip the ones we manually set
             for ((headerName, headerValues) in headers) {
+                if (headerName.equals("User-Agent", ignoreCase = true) ||
+                    headerName.equals("Cookie", ignoreCase = true) ||
+                    headerName.equals("Referer", ignoreCase = true)) {
+                    continue
+                }
+
                 if (headerValues.size > 1) {
                     builder.removeHeader(headerName)
                     for (value in headerValues) {
