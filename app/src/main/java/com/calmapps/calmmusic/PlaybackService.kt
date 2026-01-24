@@ -6,14 +6,16 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import androidx.annotation.OptIn
+import androidx.core.net.toUri
 import androidx.media3.common.C
-import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.DefaultMediaNotificationProvider
@@ -21,14 +23,13 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
-import androidx.core.net.toUri
+import okhttp3.ConnectionPool
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 /**
- * Media3-based playback service for local music files.
+ * Media3-based playback service.
  *
- * This mirrors the CalmCast PlaybackService pattern so that local playback
- * integrates with the system media session, notification, and hardware
- * controls (volume keys, lockscreen, etc.).
  */
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
@@ -37,6 +38,10 @@ class PlaybackService : MediaSessionService() {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "calmmusic_playback_channel"
         private var errorCallback: ((PlaybackException) -> Unit)? = null
+
+        private const val NEWPIPE_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
+
+        private const val BYPASS_COOKIES = "SOCS=CAI; VISITOR_INFO1_LIVE=i7Sm6Qgj0lE; CONSENT=YES+cb.20210328-17-p0.en+FX+475"
     }
 
     @OptIn(UnstableApi::class)
@@ -44,10 +49,21 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         createNotificationChannel()
 
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                30_000,
+                120_000,
+                500,
+                1000
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
         val mediaSourceFactory = DefaultMediaSourceFactory(createDataSourceFactory())
 
         val player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
             .build()
 
         val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
@@ -115,7 +131,19 @@ class PlaybackService : MediaSessionService() {
     @OptIn(UnstableApi::class)
     private fun createDataSourceFactory(): DataSource.Factory {
         val app = application as CalmMusic
-        val upstreamFactory = DefaultDataSource.Factory(this)
+
+        val okHttpClient = OkHttpClient.Builder()
+            .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
+
+        val upstreamFactory = OkHttpDataSource.Factory(okHttpClient)
+            .setUserAgent(NEWPIPE_USER_AGENT)
+            .setDefaultRequestProperties(mapOf(
+                "Cookie" to BYPASS_COOKIES,
+                "Referer" to "https://www.youtube.com/"
+            ))
 
         val resolvingFactory = ResolvingDataSource.Factory(upstreamFactory) { dataSpec ->
             val uri = dataSpec.uri

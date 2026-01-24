@@ -26,9 +26,9 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
     }
 
     companion object {
-        private const val USER_AGENT: String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        const val NEWPIPE_USER_AGENT: String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
-        private const val MAGIC_COOKIES: String = "SOCS=CAI; VISITOR_INFO1_LIVE=i7Sm6Qgj0lE; CONSENT=YES+cb.20210328-17-p0.en+FX+475; PREF=tz=UTC&hl=en"
+        private const val BYPASS_COOKIES: String = "SOCS=CAI; VISITOR_INFO1_LIVE=i7Sm6Qgj0lE; CONSENT=YES+cb.20210328-17-p0.en+FX+475"
 
         @Volatile
         private var initialized: Boolean = false
@@ -37,8 +37,8 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
             if (!initialized) {
                 synchronized(this) {
                     if (!initialized) {
-                        val localization = Localization("US", "en")
-                        NewPipe.init(OkHttpDownloader(client), localization)
+                        // Force US/English to match our hardcoded cookies
+                        NewPipe.init(OkHttpDownloader(client), Localization("US", "en"))
                         initialized = true
                     }
                 }
@@ -54,7 +54,6 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
 
     private suspend fun getAudioUrlWithRetry(videoId: String, maxBitrateKbps: Int?): String {
         var lastException: Exception? = null
-        // is often temporary or clears up on a fresh connection attempt.
         repeat(3) { attempt ->
             try {
                 return getAudioUrl(videoId, maxBitrateKbps)
@@ -75,8 +74,6 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
     private suspend fun getAudioUrl(videoId: String, maxBitrateKbps: Int?): String =
         withContext(Dispatchers.IO) {
             val url = "https://www.youtube.com/watch?v=$videoId"
-
-            // Ensure initialization (safe to call multiple times)
             ensureInitialized(client)
 
             val service = NewPipe.getServiceByUrl(url) as YoutubeService
@@ -101,59 +98,49 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
         }
 
     private class OkHttpDownloader(private val client: OkHttpClient) : Downloader() {
-
         override fun execute(request: Request): Response {
             val httpMethod = request.httpMethod()
             val url = request.url()
-            val headers = request.headers()
+            val headers = request.headers() // These come from NewPipe extractor
             val dataToSend = request.dataToSend()
 
-            var requestBody: RequestBody? = null
-            if (dataToSend != null) {
-                requestBody = RequestBody.create(null, dataToSend)
-            }
+            val requestBody = if (dataToSend != null) RequestBody.create(null, dataToSend) else null
 
             val builder = okhttp3.Request.Builder()
                 .method(httpMethod, requestBody)
                 .url(url)
-                // Always overwrite these three headers to ensure the "Magic" bypass works
-                .header("User-Agent", USER_AGENT)
-                .header("Cookie", MAGIC_COOKIES)
+                .header("User-Agent", NEWPIPE_USER_AGENT)
+                .header("Cookie", BYPASS_COOKIES)
                 .header("Referer", "https://www.youtube.com/")
 
-            // Copy other headers from NewPipe, but skip the ones we manually set
-            for ((headerName, headerValues) in headers) {
-                if (headerName.equals("User-Agent", ignoreCase = true) ||
-                    headerName.equals("Cookie", ignoreCase = true) ||
-                    headerName.equals("Referer", ignoreCase = true)) {
+            for ((name, values) in headers) {
+                if (name.equals("User-Agent", ignoreCase = true) ||
+                    name.equals("Cookie", ignoreCase = true) ||
+                    name.equals("Referer", ignoreCase = true)) {
                     continue
                 }
 
-                if (headerValues.size > 1) {
-                    builder.removeHeader(headerName)
-                    for (value in headerValues) {
-                        builder.addHeader(headerName, value)
-                    }
-                } else if (headerValues.size == 1) {
-                    builder.header(headerName, headerValues[0])
+                builder.removeHeader(name)
+                for (value in values) {
+                    builder.addHeader(name, value)
                 }
             }
 
             val response = client.newCall(builder.build()).execute()
+
             if (response.code == 429) {
                 response.close()
                 throw ReCaptchaException("reCaptcha Challenge requested", url)
             }
 
-            val body = response.body
-            val responseBodyToReturn = body?.string()
+            val body = response.body?.string()
             val latestUrl = response.request.url.toString()
 
             return Response(
                 response.code,
                 response.message,
                 response.headers.toMultimap(),
-                responseBodyToReturn,
+                body,
                 latestUrl,
             )
         }

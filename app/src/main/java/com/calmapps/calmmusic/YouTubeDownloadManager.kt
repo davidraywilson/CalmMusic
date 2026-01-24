@@ -2,6 +2,7 @@ package com.calmapps.calmmusic
 
 import android.content.Context
 import android.os.Environment
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import com.calmapps.calmmusic.data.AlbumEntity
@@ -29,13 +30,6 @@ import java.io.RandomAccessFile
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
-/**
- * Central manager for YouTube downloads.
- * * FEATURES:
- * 1. App-Specific Storage: Saves directly to /Android/data/.../files/Music (No SAF permissions).
- * 2. Chunked Downloading: Uses concurrent byte-range requests for faster speeds.
- * 3. Auto-Library Update: Immediately inserts the song/artist/album into the Room database.
- */
 data class YouTubeDownloadStatus(
     val id: String,
     val songId: String,
@@ -73,7 +67,6 @@ class YouTubeDownloadManager(
 
         val job = appScope.launch {
             val context = app.applicationContext
-
             val musicDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)
 
             if (musicDir == null) {
@@ -151,15 +144,18 @@ internal suspend fun performYouTubeDownloadInternal(
     var tmpFile: File? = null
     try {
         val videoId = song.id
+        val TAG = "YouTubeDownload"
 
-        // Prefer the Innertube/Piped-based client for download URLs, since
-        // some videos intermittently cause NewPipe to throw "The page needs
-        // to be reloaded". Fall back to NewPipe only if Piped fails.
         val streamUrl = withContext(Dispatchers.IO) {
             try {
-                app.youTubeInnertubeClient.getBestAudioUrl(videoId)
-            } catch (_: Exception) {
-                app.youTubeStreamResolver.getDownloadAudioUrl(videoId)
+                val url = app.youTubeInnertubeClient.getBestAudioUrl(videoId)
+                Log.i(TAG, "[$videoId] Resolved URL via InnerTube/Piped")
+                url
+            } catch (e: Exception) {
+                Log.w(TAG, "[$videoId] InnerTube/Piped failed: ${e.message}. Falling back to NewPipe.")
+                val url = app.youTubeStreamResolver.getDownloadAudioUrl(videoId)
+                Log.i(TAG, "[$videoId] Resolved URL via NewPipe")
+                url
             }
         }
 
@@ -177,8 +173,11 @@ internal suspend fun performYouTubeDownloadInternal(
         }
 
         val downloadSuccess = withContext(Dispatchers.IO) {
+            val userAgent = YouTubeStreamResolver.NEWPIPE_USER_AGENT
+
             val probeRequest = Request.Builder()
                 .url(streamUrl)
+                .header("User-Agent", userAgent) // <--- CRITICAL FIX
                 .head()
                 .build()
 
@@ -205,6 +204,7 @@ internal suspend fun performYouTubeDownloadInternal(
                         launch(Dispatchers.IO) {
                             val rangeRequest = Request.Builder()
                                 .url(streamUrl)
+                                .header("User-Agent", userAgent) // <--- CRITICAL FIX
                                 .addHeader("Range", "bytes=$start-$end")
                                 .build()
 
@@ -220,13 +220,11 @@ internal suspend fun performYouTubeDownloadInternal(
                                     var offset = start
                                     while (body.byteStream().read(buffer).also { read = it } != -1) {
                                         if (read <= 0) continue
-
                                         synchronized(raf) {
                                             raf.seek(offset)
                                             raf.write(buffer, 0, read)
                                         }
                                         offset += read
-
                                         val totalSoFar = downloaded.addAndGet(read.toLong())
                                         onProgress((totalSoFar.toDouble() / contentLength.toDouble()).toFloat())
                                     }
@@ -238,6 +236,7 @@ internal suspend fun performYouTubeDownloadInternal(
             } else {
                 val request = Request.Builder()
                     .url(streamUrl)
+                    .header("User-Agent", userAgent) // <--- CRITICAL FIX
                     .build()
 
                 client.newCall(request).execute().use { response ->
@@ -268,9 +267,6 @@ internal suspend fun performYouTubeDownloadInternal(
 
         if (!downloadSuccess) return false
 
-        // First copy the fully-downloaded temp file into the final target file
-        // location, then write tags directly into the final file so that future
-        // scans (e.g., after a cold start) see complete metadata.
         withContext(Dispatchers.IO) {
             FileInputStream(tmpFile).use { input ->
                 FileOutputStream(targetFile).use { output ->
@@ -287,11 +283,7 @@ internal suspend fun performYouTubeDownloadInternal(
 
                 tag.setField(FieldKey.TITLE, song.title)
                 tag.setField(FieldKey.ARTIST, song.artist)
-
-                if (!song.album.isNullOrBlank()) {
-                    tag.setField(FieldKey.ALBUM, song.album)
-                }
-
+                if (!song.album.isNullOrBlank()) tag.setField(FieldKey.ALBUM, song.album)
                 song.trackNumber?.let { tag.setField(FieldKey.TRACK, it.toString()) }
                 song.discNumber?.let { tag.setField(FieldKey.DISC_NO, it.toString()) }
 
@@ -306,9 +298,8 @@ internal suspend fun performYouTubeDownloadInternal(
         withContext(Dispatchers.IO) {
             try {
                 val settings = app.settingsManager
-                if (!settings.includeLocalMusic.value) {
-                    settings.setIncludeLocalMusic(true)
-                }
+                if (!settings.includeLocalMusic.value) settings.setIncludeLocalMusic(true)
+
                 val database = CalmMusicDatabase.getDatabase(app)
                 val songDao = database.songDao()
                 val albumDao = database.albumDao()
@@ -316,10 +307,6 @@ internal suspend fun performYouTubeDownloadInternal(
                 val playlistDao = database.playlistDao()
 
                 val fileUri = android.net.Uri.fromFile(targetFile)
-                val fileUriString = fileUri.toString()
-                val localLastModified = targetFile.lastModified()
-                val localSize = targetFile.length()
-
                 val existingStreamingEntity = SongEntity(
                     id = videoId,
                     title = song.title,
@@ -341,39 +328,23 @@ internal suspend fun performYouTubeDownloadInternal(
                     context = context,
                     uri = fileUri,
                     name = targetFile.name,
-                    lastModified = localLastModified,
-                    fileSize = localSize,
+                    lastModified = targetFile.lastModified(),
+                    fileSize = targetFile.length(),
                     existing = existingStreamingEntity,
                 )
                 val localSongEntity = rawLocalSongEntity.copy(sourceType = "YOUTUBE_DOWNLOAD")
 
                 val artistId = localSongEntity.artistId
                 val albumId = localSongEntity.albumId
-                val displayArtistName = localSongEntity.artist
-                val displayAlbumName = localSongEntity.album
-
-                if (artistId != null && displayArtistName.isNotBlank()) {
-                    val artistEntity = ArtistEntity(
-                        id = artistId,
-                        name = displayArtistName,
-                        sourceType = "YOUTUBE_DOWNLOAD",
-                    )
-                    artistDao.upsertAll(listOf(artistEntity))
+                if (artistId != null && localSongEntity.artist.isNotBlank()) {
+                    artistDao.upsertAll(listOf(ArtistEntity(id = artistId, name = localSongEntity.artist, sourceType = "YOUTUBE_DOWNLOAD")))
                 }
-
-                if (albumId != null && displayAlbumName != null) {
-                    val albumEntity = AlbumEntity(
-                        id = albumId,
-                        name = displayAlbumName,
-                        artist = displayArtistName.takeIf { it.isNotBlank() },
-                        sourceType = "YOUTUBE_DOWNLOAD",
-                        artistId = artistId,
-                    )
-                    albumDao.upsertAll(listOf(albumEntity))
+                if (albumId != null && localSongEntity.album != null) {
+                    albumDao.upsertAll(listOf(AlbumEntity(id = albumId, name = localSongEntity.album, artist = localSongEntity.artist.takeIf { it.isNotBlank() }, sourceType = "YOUTUBE_DOWNLOAD", artistId = artistId)))
                 }
 
                 songDao.upsertAll(listOf(localSongEntity))
-                playlistDao.updateSongIdForAllPlaylists(oldSongId = videoId, newSongId = fileUriString)
+                playlistDao.updateSongIdForAllPlaylists(oldSongId = videoId, newSongId = fileUri.toString())
 
                 if (localSongEntity.id != videoId) {
                     songDao.deleteByIds(listOf(videoId))

@@ -69,6 +69,8 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-moshi:2.11.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.media3:media3-datasource-okhttp:1.2.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)
@@ -112,5 +114,5 @@ dependencies {
 
     // meta tag library
     implementation("net.jthink:jaudiotagger:3.0.1")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4") // Or your compatible version
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
 }
