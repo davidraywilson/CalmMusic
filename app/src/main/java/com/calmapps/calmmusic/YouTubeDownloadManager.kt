@@ -53,7 +53,7 @@ class YouTubeDownloadManager(
 
     private val jobsById = mutableMapOf<String, Job>()
 
-    fun enqueueDownload(song: com.calmapps.calmmusic.ui.SongUiModel) {
+    fun enqueueDownload(song: com.calmapps.calmmusic.ui.SongUiModel, albumArtist: String? = null) {
         val id = UUID.randomUUID().toString()
         val initial = YouTubeDownloadStatus(
             id = id,
@@ -83,6 +83,7 @@ class YouTubeDownloadManager(
                 performYouTubeDownloadInternal(
                     app = app,
                     song = song,
+                    albumArtist = albumArtist,
                     targetDir = musicDir,
                     context = context,
                     client = client,
@@ -136,6 +137,7 @@ class YouTubeDownloadManager(
 internal suspend fun performYouTubeDownloadInternal(
     app: CalmMusic,
     song: com.calmapps.calmmusic.ui.SongUiModel,
+    albumArtist: String?,
     targetDir: File,
     context: Context,
     client: OkHttpClient,
@@ -177,7 +179,7 @@ internal suspend fun performYouTubeDownloadInternal(
 
             val probeRequest = Request.Builder()
                 .url(streamUrl)
-                .header("User-Agent", userAgent) // <--- CRITICAL FIX
+                .header("User-Agent", userAgent)
                 .head()
                 .build()
 
@@ -204,7 +206,7 @@ internal suspend fun performYouTubeDownloadInternal(
                         launch(Dispatchers.IO) {
                             val rangeRequest = Request.Builder()
                                 .url(streamUrl)
-                                .header("User-Agent", userAgent) // <--- CRITICAL FIX
+                                .header("User-Agent", userAgent)
                                 .addHeader("Range", "bytes=$start-$end")
                                 .build()
 
@@ -236,7 +238,7 @@ internal suspend fun performYouTubeDownloadInternal(
             } else {
                 val request = Request.Builder()
                     .url(streamUrl)
-                    .header("User-Agent", userAgent) // <--- CRITICAL FIX
+                    .header("User-Agent", userAgent)
                     .build()
 
                 client.newCall(request).execute().use { response ->
@@ -284,6 +286,11 @@ internal suspend fun performYouTubeDownloadInternal(
                 tag.setField(FieldKey.TITLE, song.title)
                 tag.setField(FieldKey.ARTIST, song.artist)
                 if (!song.album.isNullOrBlank()) tag.setField(FieldKey.ALBUM, song.album)
+
+                if (!albumArtist.isNullOrBlank()) {
+                    tag.setField(FieldKey.ALBUM_ARTIST, albumArtist)
+                }
+
                 song.trackNumber?.let { tag.setField(FieldKey.TRACK, it.toString()) }
                 song.discNumber?.let { tag.setField(FieldKey.DISC_NO, it.toString()) }
 
@@ -324,7 +331,7 @@ internal suspend fun performYouTubeDownloadInternal(
                     localFileSizeBytes = null,
                 )
 
-                val rawLocalSongEntity = LocalMusicScanner.buildSongEntityFromFile(
+                val scannedAudio = LocalMusicScanner.buildSongEntityFromFile(
                     context = context,
                     uri = fileUri,
                     name = targetFile.name,
@@ -332,15 +339,52 @@ internal suspend fun performYouTubeDownloadInternal(
                     fileSize = targetFile.length(),
                     existing = existingStreamingEntity,
                 )
-                val localSongEntity = rawLocalSongEntity.copy(sourceType = "YOUTUBE_DOWNLOAD")
 
-                val artistId = localSongEntity.artistId
-                val albumId = localSongEntity.albumId
-                if (artistId != null && localSongEntity.artist.isNotBlank()) {
-                    artistDao.upsertAll(listOf(ArtistEntity(id = artistId, name = localSongEntity.artist, sourceType = "YOUTUBE_DOWNLOAD")))
+                fun String.toIdComponent(): String =
+                    trim().replace(Regex("\\s+"), " ").lowercase()
+
+                val trackArtistKey = song.artist.toIdComponent()
+                val albumKey = song.album?.toIdComponent()
+
+                val effectiveAlbumArtist = albumArtist?.takeIf { it.isNotBlank() } ?: song.artist
+                val albumArtistKey = effectiveAlbumArtist.toIdComponent()
+
+                val artistId = "YOUTUBE_DOWNLOAD:$trackArtistKey"
+
+                val albumId = if (albumKey != null) {
+                    "YOUTUBE_DOWNLOAD:$albumArtistKey:$albumKey"
+                } else null
+
+                val localSongEntity = scannedAudio.song.copy(
+                    sourceType = "YOUTUBE_DOWNLOAD",
+                    artistId = artistId,
+                    albumId = albumId
+                )
+
+                if (artistId.isNotBlank()) {
+                    artistDao.upsertAll(listOf(ArtistEntity(
+                        id = artistId,
+                        name = song.artist,
+                        sourceType = "YOUTUBE_DOWNLOAD"
+                    )))
                 }
+
                 if (albumId != null && localSongEntity.album != null) {
-                    albumDao.upsertAll(listOf(AlbumEntity(id = albumId, name = localSongEntity.album, artist = localSongEntity.artist.takeIf { it.isNotBlank() }, sourceType = "YOUTUBE_DOWNLOAD", artistId = artistId)))
+                    val albumEntityArtistId = "YOUTUBE_DOWNLOAD:$albumArtistKey"
+
+                    artistDao.upsertAll(listOf(ArtistEntity(
+                        id = albumEntityArtistId,
+                        name = effectiveAlbumArtist,
+                        sourceType = "YOUTUBE_DOWNLOAD"
+                    )))
+
+                    albumDao.upsertAll(listOf(AlbumEntity(
+                        id = albumId,
+                        name = localSongEntity.album,
+                        artist = effectiveAlbumArtist,
+                        sourceType = "YOUTUBE_DOWNLOAD",
+                        artistId = albumEntityArtistId
+                    )))
                 }
 
                 songDao.upsertAll(listOf(localSongEntity))

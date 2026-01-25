@@ -198,7 +198,7 @@ fun CalmMusic(app: CalmMusic) {
             // 2. Identify the actual Song IDs (Video IDs) for the newly finished downloads
             val newSongIds = currentCompletedDownloads
                 .filter { it.id in newCompletedUUIDs }
-                .map { it.songId } // <--- Key fix: Pass songId, not UUID
+                .map { it.songId }
 
             // 3. Notify ViewModel to hot-swap playback
             newSongIds.forEach { songId ->
@@ -1420,7 +1420,22 @@ fun CalmMusic(app: CalmMusic) {
                 canDownload = (streamingProvider == StreamingProvider.YOUTUBE && song.sourceType == "YOUTUBE"),
                 isDownloadInProgress = downloadStatuses.any { it.songId == song.id && (it.state == YouTubeDownloadStatus.State.PENDING || it.state == YouTubeDownloadStatus.State.IN_PROGRESS) },
                 onDownloadClick = {
-                    app.youTubeDownloadManager.enqueueDownload(song)
+                    var albumArtist: String? = null
+
+                    if (song.album != null) {
+                        val libraryMatch = libraryAlbums.find {
+                            it.title.equals(song.album, ignoreCase = true)
+                        }
+                        if (libraryMatch != null) {
+                            albumArtist = libraryMatch.artist
+                        } else {
+                            if (selectedAlbum?.title.equals(song.album, ignoreCase = true)) {
+                                albumArtist = selectedAlbum?.artist
+                            }
+                        }
+                    }
+
+                    app.youTubeDownloadManager.enqueueDownload(song, albumArtist)
                     libraryScope.launch {
                         snackbarHostState.showSnackbar(
                             message = "Download started",

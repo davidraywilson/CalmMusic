@@ -10,10 +10,6 @@ import androidx.room.Index
 
 /**
  * Unified song representation used for both Apple Music and local files.
- *
- * All songs live in this single table; the [sourceType] column differentiates
- * between APPLE_MUSIC and LOCAL_FILE, and [audioUri] points to the underlying
- * resource (Apple catalog/library id or a content/file URI).
  */
 @Entity(
     tableName = "songs",
@@ -26,7 +22,6 @@ import androidx.room.Index
 data class SongEntity(
     @PrimaryKey val id: String,
     val title: String,
-    /** Human-readable artist name (for quick display and simple queries). */
     val artist: String,
     val album: String?,
     val albumId: String?,
@@ -35,9 +30,7 @@ data class SongEntity(
     val durationMillis: Long?,
     val sourceType: String,
     val audioUri: String,
-    /** Optional reference to a canonical artist row. */
     val artistId: String? = null,
-    /** Optional release year for this song/album, when available. */
     val releaseYear: Int? = null,
     val localLastModifiedMillis: Long? = null,
     val localFileSizeBytes: Long? = null,
@@ -52,31 +45,18 @@ data class SongEntity(
 data class AlbumEntity(
     @PrimaryKey val id: String,
     val name: String,
-    /** Human-readable artist name for this album. */
     val artist: String?,
     val sourceType: String,
-    /** Optional reference to a canonical artist row. */
     val artistId: String? = null,
 )
 
 @Entity(tableName = "artists")
 data class ArtistEntity(
     @PrimaryKey val id: String,
-    /**
-     * Display name for the artist.
-     *
-     * We keep this as a single string rather than splitting into first/last
-     * because most music metadata (including Apple Music) only exposes a
-     * display name, and splitting heuristically is unreliable.
-     */
     val name: String,
-    /** APPLE_MUSIC, LOCAL_FILE, etc. */
-    val sourceType: String,
+    val sourceType: String, // <--- Ensure this parameter exists
 )
 
-/**
- * Projection type that includes aggregated song/album counts for each artist.
- */
 data class ArtistWithCounts(
     val id: String,
     val name: String,
@@ -99,8 +79,12 @@ interface SongDao {
     @Query("SELECT * FROM songs WHERE artist = :artist ORDER BY albumId, trackNumber, title")
     suspend fun getSongsByArtist(artist: String): List<SongEntity>
 
-    // Better sorting for artist views
-    @Query("SELECT * FROM songs WHERE artistId = :artistId ORDER BY albumId, trackNumber, title")
+    @Query(
+        "SELECT s.* FROM songs s " +
+                "LEFT JOIN albums a ON s.albumId = a.id " +
+                "WHERE s.artistId = :artistId OR a.artistId = :artistId " +
+                "ORDER BY s.albumId, s.trackNumber, s.title"
+    )
     suspend fun getSongsByArtistId(artistId: String): List<SongEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -138,13 +122,13 @@ interface ArtistDao {
 
     @Query(
         "SELECT a.id, a.name, a.sourceType, " +
-            "COUNT(DISTINCT s.id) AS songCount, " +
-            "COUNT(DISTINCT al.id) AS albumCount " +
-            "FROM artists a " +
-            "LEFT JOIN songs s ON s.artistId = a.id " +
-            "LEFT JOIN albums al ON al.artistId = a.id " +
-            "GROUP BY a.id " +
-            "ORDER BY a.name COLLATE NOCASE",
+                "COUNT(DISTINCT s.id) AS songCount, " +
+                "COUNT(DISTINCT al.id) AS albumCount " +
+                "FROM artists a " +
+                "LEFT JOIN albums al ON al.artistId = a.id " +
+                "LEFT JOIN songs s ON (s.artistId = a.id OR s.albumId = al.id) " +
+                "GROUP BY a.id " +
+                "ORDER BY a.name COLLATE NOCASE",
     )
     suspend fun getAllArtistsWithCounts(): List<ArtistWithCounts>
 

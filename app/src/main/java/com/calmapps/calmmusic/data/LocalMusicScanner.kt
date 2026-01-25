@@ -3,18 +3,29 @@ package com.calmapps.calmmusic.data
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
-import androidx.documentfile.provider.DocumentFile
 import androidx.core.net.toUri
+import androidx.documentfile.provider.DocumentFile
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.TagOptionSingleton
+import java.io.File
+import java.io.FileOutputStream
+
+/**
+ * Wrapper for a scanned song that includes metadata not directly stored in [SongEntity],
+ * such as the explicit [albumArtist] string. This is crucial for correctly populating
+ * [AlbumEntity] rows (e.g. preserving "Various Artists" display text).
+ */
+data class ScannedLocalAudio(
+    val song: SongEntity,
+    val albumArtist: String?,
+)
 
 object LocalMusicScanner {
     private val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "aac", "flac", "wav", "ogg", "mp4", "opus")
 
     /**
      * Scan the given folders for audio files.
-     *
-     * Implementation note: this performs a SAF traversal to discover candidate
-     * audio files, then processes them in a second pass where files that are
-     * new or changed since the last scan are prioritized.
      */
     suspend fun scanFolders(
         context: Context,
@@ -22,8 +33,8 @@ object LocalMusicScanner {
         existingSongsByUri: Map<String, SongEntity> = emptyMap(),
         lastScanMillis: Long = 0L,
         onProgress: suspend (processed: Int, total: Int) -> Unit = { _, _ -> },
-    ): List<SongEntity> {
-        val result = mutableListOf<SongEntity>()
+    ): List<ScannedLocalAudio> {
+        val result = mutableListOf<ScannedLocalAudio>()
 
         data class Candidate(
             val uri: Uri,
@@ -37,14 +48,21 @@ object LocalMusicScanner {
 
         for (uriString in folderUris) {
             val treeUri = try {
-                uriString.toUri() } catch (_: Exception) { continue }
+                uriString.toUri()
+            } catch (_: Exception) {
+                continue
+            }
             val root = DocumentFile.fromTreeUri(context, treeUri) ?: continue
             val stack = ArrayDeque<DocumentFile>()
             stack.add(root)
 
             while (stack.isNotEmpty()) {
                 val dir = stack.removeFirst()
-                val children = try { dir.listFiles().toList() } catch (_: Exception) { emptyList() }
+                val children = try {
+                    dir.listFiles().toList()
+                } catch (_: Exception) {
+                    emptyList()
+                }
 
                 for (child in children) {
                     if (child.isDirectory) {
@@ -82,9 +100,9 @@ object LocalMusicScanner {
         val (unchanged, changed) = candidates.partition { candidate ->
             val existing = candidate.existing
             existing != null &&
-                existing.sourceType == "LOCAL_FILE" &&
-                existing.localLastModifiedMillis == candidate.lastModified &&
-                existing.localFileSizeBytes == candidate.fileSize
+                    existing.sourceType == "LOCAL_FILE" &&
+                    existing.localLastModifiedMillis == candidate.lastModified &&
+                    existing.localFileSizeBytes == candidate.fileSize
         }
 
         val (recentChanged, olderChanged) = changed.partition { candidate ->
@@ -93,8 +111,8 @@ object LocalMusicScanner {
 
         val orderedCandidates =
             (recentChanged.sortedByDescending { it.lastModified } +
-                olderChanged.sortedByDescending { it.lastModified } +
-                unchanged)
+                    olderChanged.sortedByDescending { it.lastModified } +
+                    unchanged)
 
         val total = orderedCandidates.size
         var processed = 0
@@ -115,13 +133,13 @@ object LocalMusicScanner {
                 existing.localLastModifiedMillis == candidate.lastModified &&
                 existing.localFileSizeBytes == candidate.fileSize
             ) {
-                result.add(existing)
+                result.add(ScannedLocalAudio(existing, null))
                 processed++
                 maybeReportProgress()
                 continue
             }
 
-            val song = buildSongEntityFromFile(
+            val scanned = buildSongEntityFromFile(
                 context = context,
                 uri = candidate.uri,
                 name = candidate.name,
@@ -130,7 +148,7 @@ object LocalMusicScanner {
                 existing = existing,
             )
 
-            result.add(song)
+            result.add(scanned)
 
             processed++
             maybeReportProgress()
@@ -148,7 +166,7 @@ object LocalMusicScanner {
         lastModified: Long,
         fileSize: Long,
         existing: SongEntity? = null,
-    ): SongEntity {
+    ): ScannedLocalAudio {
         val meta = extractMetadata(context, uri)
         val titleFromName = name.substringBeforeLast('.', name)
 
@@ -157,37 +175,27 @@ object LocalMusicScanner {
         val existingArtistId = existing?.artistId
         val existingAlbumId = existing?.albumId
 
-        val trackArtist = (meta.artist?.takeIf { it.isNotBlank() } ?: existingArtist).orEmpty().trim()
+        val trackArtistDisplay = (meta.artist?.takeIf { it.isNotBlank() } ?: existingArtist).orEmpty().trim()
+        val trackArtistIdComponent = trackArtistDisplay.takeIf { it.isNotBlank() }?.normalizeForIdComponent()
 
-        val primaryArtistDisplayBase = when {
-            !meta.albumArtist.isNullOrBlank() -> meta.albumArtist
-            !meta.artist.isNullOrBlank() -> meta.artist
-            !existingArtist.isNullOrBlank() -> existingArtist
-            else -> null
-        }
-        val primaryArtistDisplay = primaryArtistDisplayBase?.trim().orEmpty()
+        val artistId = trackArtistIdComponent?.let { "LOCAL_FILE:$it" } ?: existingArtistId
 
-        val albumNameDisplay =
-            meta.album?.trim()?.takeIf { it.isNotBlank() } ?: existingAlbum
+        val explicitAlbumArtist = meta.albumArtist?.trim()?.takeIf { it.isNotBlank() }
+        val effectiveAlbumArtist = explicitAlbumArtist ?: trackArtistDisplay
+        val albumArtistIdComponent = effectiveAlbumArtist.takeIf { it.isNotBlank() }?.normalizeForIdComponent()
 
-        val primaryArtistIdComponent = primaryArtistDisplay
-            .takeIf { it.isNotBlank() }
-            ?.normalizeForIdComponent()
+        val albumNameDisplay = meta.album?.trim()?.takeIf { it.isNotBlank() } ?: existingAlbum
+        val albumNameIdComponent = albumNameDisplay?.normalizeForIdComponent()
 
-        val albumNameIdComponent = albumNameDisplay
-            ?.normalizeForIdComponent()
-
-        val artistId = primaryArtistIdComponent?.let { "LOCAL_FILE:$it" } ?: existingArtistId
-
-        val albumId = if (albumNameIdComponent != null && primaryArtistIdComponent != null) {
-            "LOCAL_FILE:${primaryArtistIdComponent}:${albumNameIdComponent}"
+        val albumId = if (albumNameIdComponent != null && albumArtistIdComponent != null) {
+            "LOCAL_FILE:${albumArtistIdComponent}:${albumNameIdComponent}"
         } else existingAlbumId
 
         val uriString = uri.toString()
-        return SongEntity(
+        val song = SongEntity(
             id = uriString,
             title = meta.title ?: existing?.title ?: titleFromName,
-            artist = trackArtist,
+            artist = trackArtistDisplay,
             album = albumNameDisplay,
             albumId = albumId,
             discNumber = meta.discNumber ?: existing?.discNumber,
@@ -200,6 +208,8 @@ object LocalMusicScanner {
             localLastModifiedMillis = lastModified,
             localFileSizeBytes = fileSize,
         )
+
+        return ScannedLocalAudio(song, explicitAlbumArtist)
     }
 
     private data class LocalMetadata(
@@ -215,7 +225,7 @@ object LocalMusicScanner {
 
     private fun extractMetadata(context: Context, uri: Uri): LocalMetadata {
         val retriever = MediaMetadataRetriever()
-        return try {
+        var meta = try {
             retriever.setDataSource(context, uri)
 
             val rawTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
@@ -223,21 +233,16 @@ object LocalMusicScanner {
             val rawAlbumArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)
             val rawAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
 
-            val title = rawTitle.normalizeTagString()
-            val artist = rawArtist.normalizeTagString()
-            val albumArtist = rawAlbumArtist.normalizeTagString()
-            val album = rawAlbum.normalizeTagString()
-
             val discStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)
             val trackStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
             val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             val yearStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)
 
             LocalMetadata(
-                title = title,
-                artist = artist,
-                albumArtist = albumArtist,
-                album = album,
+                title = rawTitle.normalizeTagString(),
+                artist = rawArtist.normalizeTagString(),
+                albumArtist = rawAlbumArtist.normalizeTagString(),
+                album = rawAlbum.normalizeTagString(),
                 discNumber = discStr?.substringBefore('/')?.trim()?.toIntOrNull(),
                 trackNumber = trackStr?.substringBefore('/')?.trim()?.toIntOrNull(),
                 durationMillis = durationStr?.toLongOrNull(),
@@ -246,7 +251,56 @@ object LocalMusicScanner {
         } catch (_: Exception) {
             LocalMetadata(null, null, null, null, null, null, null, null)
         } finally {
-            try { retriever.release() } catch (_: Exception) {}
+            try {
+                retriever.release()
+            } catch (_: Exception) {
+            }
+        }
+
+        if (meta.albumArtist.isNullOrBlank()) {
+            val tempFile = copyUriToTempFile(context, uri)
+            if (tempFile != null) {
+                try {
+                    TagOptionSingleton.getInstance().isAndroid = true
+
+                    val audioFile = AudioFileIO.read(tempFile)
+                    val tag = audioFile.tag
+                    if (tag != null) {
+                        val deepAlbumArtist = tag.getFirst(FieldKey.ALBUM_ARTIST)
+
+                        if (!deepAlbumArtist.isNullOrBlank()) {
+                            meta = meta.copy(albumArtist = deepAlbumArtist.normalizeTagString())
+                        }
+
+                        if (meta.artist.isNullOrBlank()) {
+                            meta = meta.copy(artist = tag.getFirst(FieldKey.ARTIST).normalizeTagString())
+                        }
+                        if (meta.album.isNullOrBlank()) {
+                            meta = meta.copy(album = tag.getFirst(FieldKey.ALBUM).normalizeTagString())
+                        }
+                    }
+                } catch (_: Exception) {
+                    // Ignore deep scan failures
+                } finally {
+                    tempFile.delete()
+                }
+            }
+        }
+
+        return meta
+    }
+
+    private fun copyUriToTempFile(context: Context, uri: Uri): File? {
+        return try {
+            val inputStream = context.contentResolver.openInputStream(uri) ?: return null
+            val tempFile = File.createTempFile("scanner_probe", ".tmp", context.cacheDir)
+            FileOutputStream(tempFile).use { output ->
+                inputStream.copyTo(output)
+            }
+            inputStream.close()
+            tempFile
+        } catch (e: Exception) {
+            null
         }
     }
 }
@@ -258,40 +312,24 @@ private fun String?.normalizeTagString(): String? {
     return trimmed.fixCommonTagMojibake()
 }
 
-/**
- * Attempt to fix common mojibake sequences in ID3 tags without re-decoding
- * bytes. We only replace known bad sequences so valid text is left alone.
- */
 private fun String.fixCommonTagMojibake(): String {
     var fixed = this
-
-    // Map of common UTF-8-as-Latin1 sequences to their intended characters.
     val replacements = mapOf(
-        "â€™" to "’", // right single quotation mark
-        "â€˜" to "‘", // left single quotation mark
-        "â€œ" to "“", // left double quotation mark
-        "â€" to "”", // right double quotation mark
-        "â€“" to "–", // en dash
-        "â€”" to "—", // em dash
+        "â€™" to "’",
+        "â€˜" to "‘",
+        "â€œ" to "“",
+        "â€ " to "”",
+        "â€“" to "–",
+        "â€”" to "—",
     )
-
     for ((bad, good) in replacements) {
         if (fixed.contains(bad)) {
             fixed = fixed.replace(bad, good)
         }
     }
-
     return fixed
 }
 
-/**
- * Normalize a tag string for use in canonical IDs (artistId/albumId).
- *
- * This is deliberately more aggressive than [normalizeTagString]: we
- * lowercase and collapse internal whitespace so that trivial differences
- * like "In A Perfect World" vs "In a  Perfect  World" don't create
- * separate albums/artists.
- */
 private fun String.normalizeForIdComponent(): String =
     trim()
         .replace(Regex("\\s+"), " ")

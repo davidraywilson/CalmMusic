@@ -530,7 +530,7 @@ class CalmMusicViewModel(
                 var segmentEndIndex = startIndex
                 while (segmentEndIndex < queue.size &&
                     (queue[segmentEndIndex].sourceType == "LOCAL_FILE" ||
-                        queue[segmentEndIndex].sourceType == "YOUTUBE_DOWNLOAD")
+                            queue[segmentEndIndex].sourceType == "YOUTUBE_DOWNLOAD")
                 ) {
                     segmentEndIndex++
                 }
@@ -1025,7 +1025,12 @@ class CalmMusicViewModel(
         onScanProgress: (Float) -> Unit,
         onIngestProgress: (Float) -> Unit,
     ): LibraryRepository.LocalResyncResult {
-        val result = libraryRepository.resyncLocalLibrary(includeLocal, folders, onScanProgress, onIngestProgress)
+        val result = libraryRepository.resyncLocalLibrary(
+            includeLocal,
+            folders,
+            onScanProgress,
+            onIngestProgress
+        )
         updateLibrary(
             songs = result.songs,
             albums = result.albums,

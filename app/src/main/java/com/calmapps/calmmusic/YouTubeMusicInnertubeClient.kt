@@ -373,23 +373,28 @@ internal class YouTubeMusicInnertubeClientImpl(
             for (k in 0 until subtitleRuns.length()) {
                 val run = subtitleRuns.optJSONObject(k) ?: continue
                 val textValue = run.optString("text").orEmpty().trim()
-                if (textValue.isEmpty()) continue
+                if (textValue.isEmpty() || textValue == "•") continue
 
                 val navEndpoint = run.optJSONObject("navigationEndpoint")
                 val subBrowseEndpoint = navEndpoint?.optJSONObject("browseEndpoint")
                 val subBrowseId = subBrowseEndpoint?.optString("browseId")
 
-                if (artist == null && subBrowseId != null && subBrowseId.startsWith("UC")) {
-                    artist = textValue
-                } else if (artist == null && subBrowseId.isNullOrBlank()) {
-                    artist = textValue
+                val maybeYear = textValue.toIntOrNull()
+                if (maybeYear != null && maybeYear in 1900..2100) {
+                    if (year == null) year = maybeYear
+                    continue
                 }
 
-                if (year == null) {
-                    val maybeYear = textValue.toIntOrNull()
-                    if (maybeYear != null && maybeYear in 1900..2100) {
-                        year = maybeYear
-                    }
+                if (textValue.equals("Album", ignoreCase = true) ||
+                    textValue.equals("Single", ignoreCase = true) ||
+                    textValue.equals("EP", ignoreCase = true)) {
+                    continue
+                }
+
+                if (subBrowseId != null && subBrowseId.startsWith("UC")) {
+                    artist = textValue
+                } else if (artist == null) {
+                    artist = textValue
                 }
             }
         }
