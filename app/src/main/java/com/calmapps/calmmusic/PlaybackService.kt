@@ -12,6 +12,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -29,7 +30,6 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Media3-based playback service.
- *
  */
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
@@ -180,10 +180,12 @@ class PlaybackService : MediaSessionService() {
             dataSpec.withUri(resolvedUrl.toUri())
         }
 
-        return CacheDataSource.Factory()
+        val networkAndCacheStack = CacheDataSource.Factory()
             .setCache(app.mediaCache)
             .setUpstreamDataSourceFactory(resolvingFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+
+        return DefaultDataSource.Factory(this, networkAndCacheStack)
     }
 
     private fun createNotificationChannel() {
