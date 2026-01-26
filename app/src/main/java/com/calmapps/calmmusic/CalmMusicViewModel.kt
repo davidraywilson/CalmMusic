@@ -16,6 +16,7 @@ import androidx.media3.session.MediaController
 import com.apple.android.music.playback.model.PlaybackRepeatMode
 import com.calmapps.calmmusic.data.AlbumEntity
 import com.calmapps.calmmusic.data.ArtistEntity
+import com.calmapps.calmmusic.data.ArtistWithCounts
 import com.calmapps.calmmusic.data.CalmMusicDatabase
 import com.calmapps.calmmusic.data.CalmMusicSettingsManager
 import com.calmapps.calmmusic.data.LibraryRepository
@@ -159,12 +160,13 @@ class CalmMusicViewModel(
 
     suspend fun getAlbumSongs(albumId: String): List<SongUiModel> {
         return withContext(Dispatchers.IO) {
-            val idsToFetch = mutableListOf(albumId)
+            val idsToFetch = mutableSetOf(albumId)
 
-            if (albumId.startsWith("LOCAL_FILE:")) {
-                idsToFetch.add(albumId.replaceFirst("LOCAL_FILE:", "YOUTUBE:"))
-            } else if (albumId.startsWith("YOUTUBE:")) {
-                idsToFetch.add(albumId.replaceFirst("YOUTUBE:", "LOCAL_FILE:"))
+            val suffix = albumId.substringAfter(":", missingDelimiterValue = "")
+            if (suffix.isNotEmpty()) {
+                idsToFetch.add("LOCAL_FILE:$suffix")
+                idsToFetch.add("YOUTUBE:$suffix")
+                idsToFetch.add("YOUTUBE_DOWNLOAD:$suffix")
             }
 
             val allEntities = idsToFetch.flatMap { id ->
@@ -311,8 +313,26 @@ class CalmMusicViewModel(
 
     suspend fun getArtistContent(artistId: String): ArtistContent {
         return withContext(Dispatchers.IO) {
-            val songEntities = songDao.getSongsByArtistId(artistId)
-            val albumEntities = albumDao.getAlbumsByArtistId(artistId)
+            fun normalizeName(name: String): String =
+                name.trim().replace(Regex("\\s+"), " ").lowercase()
+
+            val allArtists = artistDao.getAllArtistsWithCounts()
+            val baseArtist = allArtists.firstOrNull { it.id == artistId }
+
+            val relatedArtistIds: List<String> = if (baseArtist != null) {
+                val key = normalizeName(baseArtist.name)
+                allArtists.filter { normalizeName(it.name) == key }.map { it.id }
+            } else {
+                listOf(artistId)
+            }
+
+            val songEntities = relatedArtistIds
+                .flatMap { id -> songDao.getSongsByArtistId(id) }
+                .distinctBy { it.id }
+
+            val albumEntities = relatedArtistIds
+                .flatMap { id -> albumDao.getAlbumsByArtistId(id) }
+                .distinctBy { it.id }
 
             val songs = songEntities.map { entity ->
                 SongUiModel(
@@ -1070,33 +1090,53 @@ class CalmMusicViewModel(
                 }
             }
 
-            withContext(Dispatchers.IO) {
-                val artistName = songToSave.artist.takeIf { it.isNotBlank() } ?: "Unknown artist"
-                val albumName = songToSave.album?.takeIf { it.isNotBlank() }
+            // Separate track artist vs album artist so albums can be grouped by album artist.
+            val trackArtistName = songToSave.artist.takeIf { it.isNotBlank() } ?: "Unknown artist"
+            val albumName = songToSave.album?.takeIf { it.isNotBlank() }
 
+            // Try to infer a stable album artist from the existing library when possible.
+            val inferredAlbumArtist = albumName?.let { albumTitle ->
+                _libraryAlbums.value.firstOrNull { existing ->
+                    existing.title.equals(albumTitle, ignoreCase = true)
+                }?.artist
+            }
+
+            val effectiveAlbumArtist = inferredAlbumArtist?.takeIf { it.isNotBlank() } ?: trackArtistName
+
+            withContext(Dispatchers.IO) {
                 fun String.toIdComponent(): String =
                     trim()
                         .replace(Regex("\\s+"), " ")
                         .lowercase()
 
-                val artistKey = artistName.toIdComponent()
+                val trackArtistKey = trackArtistName.toIdComponent()
+                val albumArtistKey = effectiveAlbumArtist.toIdComponent()
                 val albumKey = albumName?.toIdComponent()
 
                 val existingArtists = artistDao.getAllArtists()
-                val existingArtist = existingArtists.firstOrNull { existing ->
-                    existing.name.toIdComponent() == artistKey
-                }
 
-                val artistId = existingArtist?.id ?: "YOUTUBE:$artistKey"
+                val existingTrackArtist = existingArtists.firstOrNull { existing ->
+                    existing.name.toIdComponent() == trackArtistKey
+                }
+                val existingAlbumArtist = if (albumKey != null) {
+                    existingArtists.firstOrNull { existing ->
+                        existing.name.toIdComponent() == albumArtistKey
+                    }
+                } else null
+
+                val trackArtistId = existingTrackArtist?.id ?: "YOUTUBE:$trackArtistKey"
+                val albumArtistId = if (albumKey != null) {
+                    existingAlbumArtist?.id ?: "YOUTUBE:$albumArtistKey"
+                } else trackArtistId
 
                 val albumId = if (albumKey != null) {
-                    "YOUTUBE:$artistKey:$albumKey"
+                    "YOUTUBE:$albumArtistKey:$albumKey"
                 } else null
 
                 val songEntity = SongEntity(
                     id = songToSave.id,
                     title = songToSave.title,
-                    artist = artistName,
+                    artist = trackArtistName,
                     album = albumName,
                     albumId = albumId,
                     discNumber = songToSave.discNumber,
@@ -1104,28 +1144,38 @@ class CalmMusicViewModel(
                     durationMillis = songToSave.durationMillis,
                     sourceType = "YOUTUBE",
                     audioUri = songToSave.id,
-                    artistId = artistId,
+                    artistId = trackArtistId,
                     releaseYear = null,
                     localLastModifiedMillis = null,
                     localFileSizeBytes = null,
                 )
 
-                if (existingArtist == null) {
-                    val artistEntity = ArtistEntity(
-                        id = artistId,
-                        name = artistName,
+                val artistsToUpsert = mutableListOf<ArtistEntity>()
+                if (existingTrackArtist == null) {
+                    artistsToUpsert += ArtistEntity(
+                        id = trackArtistId,
+                        name = trackArtistName,
                         sourceType = "YOUTUBE",
                     )
-                    artistDao.upsertAll(listOf(artistEntity))
+                }
+                if (albumKey != null && albumArtistId != trackArtistId && existingAlbumArtist == null) {
+                    artistsToUpsert += ArtistEntity(
+                        id = albumArtistId,
+                        name = effectiveAlbumArtist,
+                        sourceType = "YOUTUBE",
+                    )
+                }
+                if (artistsToUpsert.isNotEmpty()) {
+                    artistDao.upsertAll(artistsToUpsert)
                 }
 
                 val albumEntity = if (albumId != null && albumName != null) {
                     AlbumEntity(
                         id = albumId,
                         name = albumName,
-                        artist = artistName,
+                        artist = effectiveAlbumArtist,
                         sourceType = "YOUTUBE",
-                        artistId = artistId,
+                        artistId = albumArtistId,
                     )
                 } else null
 
@@ -1271,19 +1321,12 @@ class CalmMusicViewModel(
                     )
                 }
 
-            val artistModels = allArtistsWithCounts.map { artist ->
-                ArtistUiModel(
-                    id = artist.id,
-                    name = artist.name,
-                    songCount = artist.songCount,
-                    albumCount = uniqueAlbumCounts[artist.id] ?: 0,
-                )
-            }
+            val mergedArtists = mergeArtistsByName(allArtistsWithCounts, uniqueAlbumCounts)
 
             updateLibrary(
                 songs = songModels,
                 albums = mergedAlbums,
-                artists = artistModels,
+                artists = mergedArtists,
             )
         } catch (_: Exception) {
         }
@@ -1298,6 +1341,34 @@ class CalmMusicViewModel(
         _libraryAlbums.value = albums
         _libraryArtists.value = artists
         _libraryRefreshTrigger.value += 1
+    }
+
+    private fun mergeArtistsByName(
+        allArtistsWithCounts: List<ArtistWithCounts>,
+        uniqueAlbumCounts: Map<String, Int>,
+    ): List<ArtistUiModel> {
+        fun normalizeName(name: String): String =
+            name.trim().replace(Regex("\\s+"), " ").lowercase()
+
+        return allArtistsWithCounts
+            .groupBy { normalizeName(it.name) }
+            .values
+            .map { group ->
+                val primary = group.find { it.sourceType == "LOCAL_FILE" }
+                    ?: group.find { it.sourceType == "YOUTUBE_DOWNLOAD" }
+                    ?: group.first()
+
+                val totalSongCount = group.sumOf { it.songCount }
+                val totalAlbumCount = group.sumOf { artist -> uniqueAlbumCounts[artist.id] ?: 0 }
+
+                ArtistUiModel(
+                    id = primary.id,
+                    name = primary.name,
+                    songCount = totalSongCount,
+                    albumCount = totalAlbumCount,
+                )
+            }
+            .sortedBy { it.name.lowercase() }
     }
 
     override fun onCleared() {
@@ -1369,14 +1440,7 @@ class CalmMusicViewModel(
 
             _libraryAlbums.value = mergedAlbums
 
-            _libraryArtists.value = allArtistsWithCounts.map { artist ->
-                ArtistUiModel(
-                    id = artist.id,
-                    name = artist.name,
-                    songCount = artist.songCount,
-                    albumCount = uniqueAlbumCounts[artist.id] ?: 0,
-                )
-            }
+            _libraryArtists.value = mergeArtistsByName(allArtistsWithCounts, uniqueAlbumCounts)
             _libraryPlaylists.value = allPlaylistsWithCounts.map { playlist ->
                 PlaylistUiModel(
                     id = playlist.id,
