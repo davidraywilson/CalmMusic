@@ -918,28 +918,34 @@ class CalmMusicViewModel(
                 if (isLocalFile) {
                     val currentLocalIndex = controller.currentMediaItemIndex
 
-                    if (currentLocalIndex >= 0 && lastLocalQueueIndex != null && currentLocalIndex != lastLocalQueueIndex) {
-
-                        val delta = currentLocalIndex - lastLocalQueueIndex!!
-
-                        if (delta > 0) {
+                    if (currentLocalIndex >= 0) {
+                        if (lastLocalQueueIndex == null) {
+                            lastLocalQueueIndex = currentLocalIndex
+                        } else if (currentLocalIndex != lastLocalQueueIndex) {
+                            val delta = currentLocalIndex - lastLocalQueueIndex!!
                             val queue = state.playbackQueue
-                            val globalStartIndex = state.playbackQueueIndex ?: 0
+                            val startGlobalIndex = state.playbackQueueIndex ?: 0
 
-                            var foundCount = -1
-                            var targetGlobalIndex = -1
+                            var targetGlobalIndex = startGlobalIndex
+                            var remaining = kotlin.math.abs(delta)
+                            val direction = if (delta > 0) 1 else -1
 
-                            for (i in globalStartIndex until queue.size) {
-                                if (queue[i].sourceType == "LOCAL_FILE" || queue[i].sourceType == "YOUTUBE_DOWNLOAD") {
-                                    foundCount++
-                                }
-                                if (foundCount == delta) {
-                                    targetGlobalIndex = i
+                            var i = startGlobalIndex
+                            while (remaining > 0) {
+                                i += direction
+                                if (i !in queue.indices) {
                                     break
+                                }
+                                val songAtIndex = queue[i]
+                                if (songAtIndex.sourceType == "LOCAL_FILE" ||
+                                    songAtIndex.sourceType == "YOUTUBE_DOWNLOAD"
+                                ) {
+                                    remaining--
                                 }
                             }
 
-                            if (targetGlobalIndex >= 0) {
+                            if (remaining == 0 && i in queue.indices) {
+                                targetGlobalIndex = i
                                 lastLocalQueueIndex = currentLocalIndex
 
                                 val newLocalSong = queue[targetGlobalIndex]
@@ -952,12 +958,10 @@ class CalmMusicViewModel(
                                     nowPlayingPositionMs = 0L,
                                     isPlaybackPlaying = isPlaying,
                                 )
+                            } else {
+                                lastLocalQueueIndex = currentLocalIndex
                             }
-                        } else {
-                            lastLocalQueueIndex = currentLocalIndex
                         }
-                    } else if (lastLocalQueueIndex == null) {
-                        lastLocalQueueIndex = currentLocalIndex
                     }
                 }
 
