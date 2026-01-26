@@ -7,7 +7,9 @@
 
 # CalmMusic
 
-CalmMusic is a minimal, mindful music player built for de‑googled and E‑ink Android devices. It unifies your Apple Music catalog and your local audio files into a calm, distraction‑free listening experience powered by the Mudita Mindful Design library.
+A calm, E‑ink‑friendly music player that puts your attention and privacy first.
+
+CalmMusic brings together your **local files**, **YouTube Music** search/streaming, and **optional Apple Music** support into one quiet, distraction‑free place to listen.
 
 "Let's make technology useful again."
 
@@ -44,138 +46,123 @@ CalmMusic is a minimal, mindful music player built for de‑googled and E‑ink 
 </tr>
 </table>
 
-## What is CalmMusic?
+## What makes CalmMusic different?
 
-CalmMusic is a simple music player for people who want less distraction and more music. There are no accounts to create, no tracking, and no clutter—just your songs and albums in a calm interface.
+CalmMusic is for people who want **less noise and more music**—especially on de‑googled phones and E‑ink devices.
 
-It brings together:
+- **Built for E‑ink and low‑distraction screens**  
+  Large text, high contrast, minimal animations, and layouts that still feel good at slow refresh rates.
+- **Mindful by design**  
+  No feeds, badges, or engagement tricks—just simple screens that do one job well.
+- **Privacy‑respecting**  
+  No tracking, no analytics SDKs, no ads. Your listening stays on your device.
+- **You stay in control**  
+  You choose which folders to scan, which streaming source to use, and what ends up in your library.
 
-- Your Apple Music catalog and playlists (if you choose to sign in)
-- Your local audio files from folders you pick on your device
-- One place to browse, search, and play your music
+## What you can do with CalmMusic
 
-## Core principles (Mudita Mindful Design)
+### 1. Listen to your local music
 
-- **Simplicity:** Each screen has one clear job and stays lightweight
-- **Privacy:** Your listening stays on your device; nothing is sold or tracked
-- **Intention:** Designed to support relaxed, intentional listening
-- **Focus:** A clean interface that doesn’t compete for your attention
-- **Ownership:** You choose what music is included and how it’s organized
+- Choose exactly which folders on your device CalmMusic is allowed to scan.
+- The app indexes supported audio files and builds a clean library of **songs, albums, artists, and playlists**.
+- Local songs work fully **offline**—perfect for slow or no‑signal moments.
 
-## Highlights
+### 2. Stream from YouTube Music (no account required)
 
-- **One library for everything**
-  - See songs, albums, artists, and playlists together
-  - Apple Music tracks and local files appear side by side
+When you pick **YouTube Music** as your streaming source:
 
-- **Apple Music, when you want it**
-  - Sign in with Apple Music to search the catalog
-  - Browse your Apple Music library songs and playlists
-  - Play full tracks using Apple’s official player
+- Search YouTube Music for songs and albums from inside CalmMusic.
+- Add YouTube tracks to the same queue as your local music.
+- Optionally let CalmMusic **fill in missing tracks on local albums** using YouTube search results.
+- See and manage active and recent **YouTube downloads** in a dedicated Downloads screen.
 
-- **Local music made easy**
-  - Pick the folders on your device that hold your music
-  - CalmMusic scans them for audio files and reads basic song info
-  - Your local songs are grouped by artist and album
+> Please respect artists’ rights and your local laws when streaming or downloading from YouTube.
 
-- **Playlists & queue**
-  - Create your own playlists inside CalmMusic
-  - Mix Apple Music tracks and local files in the same queue
-  - Use shuffle and repeat to listen the way you like
+### 3. Use Apple Music (optional)
 
-- **Mindful playback**
-  - A quiet Now Playing screen with large text and simple controls
-  - Designed to work well on E‑ink and low‑distraction devices
+If Apple Music is available in your build and you connect your account:
 
-## Why it matters
+- Browse and play from your **Apple Music library**.
+- Mix Apple Music songs into the same unified queue as your other sources.
+- Playback uses Apple’s official tools for stability and audio quality.
 
-- **Respect for your privacy**
-  - No ads, no tracking, no hidden analytics
-  - Your settings and library details stay on your device
-  - Apple Music features talk only to Apple’s own servers
+Apple Music support is **optional** and may require extra setup when building from source.
 
-- **Less noise, more music**
-  - No “engagement” feeds or attention‑grabbing tricks
-  - No badges, streaks, or pop‑ups pushing you to listen more
-  - Just enough interface to quickly get to what you want to hear
+### 4. One calm queue for everything
 
-- **Works even when you’re offline**
-  - Your local music is always available
-  - Apple Music playback uses Apple’s official tools for stability
+Regardless of where your music comes from:
 
-## Tech stack (for the curious)
+- Build a single **now‑playing queue** that can mix local files, YouTube tracks, and (optionally) Apple Music.
+- Use **shuffle** and **repeat** without losing your place.
+- Move naturally between songs with simple previous/next controls.
 
-- **Language:** Kotlin (Android, JVM target 1.8)
-- **UI:** Jetpack Compose + Material 3 + Mudita Mindful Design (MMD)
-- **Navigation:** Jetpack Navigation Compose
-- **Architecture:** Compose‑first UI with state hoisted into `MainActivity` and exposed via UI models and flows
-- **Persistence:** Room (songs, albums, artists, playlists) + SharedPreferences for lightweight settings
-- **Local files:** Storage Access Framework (`DocumentFile`) for folder access and recursive scanning
-- **Playback:**
-  - Apple MusicKit for Android AARs (`appleMusicSDK` native library)
-  - AndroidX Media3 ExoPlayer for local files in a foreground playback service
-- **Networking:** Retrofit + Moshi + OkHttp for Apple Music Web API
-- **Android:** Min SDK 28, Target/Compile SDK 35
-- **Build system:** Gradle Kotlin DSL, single `:app` module with Compose enabled
+### 5. Mindful playback & overlays
+
+- A quiet **Now Playing** screen with big typography and simple controls—easy on the eyes and on E‑ink.
+- Minimal chrome so the artwork, title, and basic actions are all you see.
+- Optional system overlay support so you can see what’s playing without reopening the full app (implementation may vary by device).
+
+## Getting started
+
+1. **Install CalmMusic** on an Android device (Android 9 / API 28 or newer is recommended).  
+2. **Open the app** – you’ll start with an empty library.
+3. **Add local music**
+   - Go to **Settings → Local music**.
+   - Pick the folders that contain your audio files.
+   - CalmMusic will scan and build your library of songs, albums, and artists.
+4. **Pick a streaming source (optional)**
+   - Go to **Settings → Streaming source**.
+   - Choose **YouTube Music** to enable YouTube search and streaming.
+   - If available, enable **Apple Music** and connect your account to use your Apple library.
+
+You can change these choices at any time.
 
 ## Privacy & data
 
-- You can use local music without creating any account
-- There is no tracking, advertising, or data selling
-- The app does not send your listening data to the developer
-- When you turn on Apple Music features:
-  - CalmMusic uses your Apple Music tokens only to talk to Apple’s services
-  - Those tokens are stored on your device and used only for Apple Music
+CalmMusic is designed to stay out of your business:
 
-### Local music behavior
+- **No accounts required** for local music or YouTube search.
+- **No ads, no analytics, no tracking SDKs.**
+- Your settings and local library live **only on your device**.
+- When you use online features:
+  - YouTube‑related features talk only to YouTube/YouTube Music (and supporting streaming APIs) as needed to search and stream audio.
+  - Apple Music features, when enabled, talk only to Apple’s services using tokens stored on your device.
 
-- You choose which folders CalmMusic is allowed to scan
-- The app looks only in those folders for supported audio files
-- Basic song info (like title, artist, album) is saved in a local database
-- You can clear and rescan your local library whenever you like
-
-## Roadmap
-
-Some ideas being explored (these may change over time):
-
-- Finish Apple Music Support (currently not able to set up Apple Music)
-- Deeper Apple Music library integration (for example: more ways to sort and filter)
+You can always remove folders, clear local data, or turn streaming features off if you prefer a fully offline experience.
 
 ## For developers
 
-Want to build from source?
+If you want to hack on CalmMusic or build your own APK:
 
-- **Requirements:**
+- **Requirements**
   - Android Studio (Giraffe / Hedgehog or newer)
-  - JDK 17 (Gradle is configured to use Java 17)
+  - JDK 17
   - Android SDK Platform 35+
   - Device or emulator running Android 9 (API 28) or newer
 
-- **Quick start:**
-  1. Clone this repository
-  2. Open the root folder in Android Studio
-  3. Let Gradle sync and download dependencies
-  4. Configure an Apple Music developer token (see `SimpleTokenProvider` and Apple’s MusicKit documentation) if you want Apple Music features
-  5. Select the `app` run configuration and press **Run**
+- **Quick start**
+  1. Clone this repository.
+  2. Open the root folder in Android Studio.
+  3. Let Gradle sync and download dependencies.
+  4. (Optional) Configure Apple Music developer credentials (see `SimpleTokenProvider` and Apple’s MusicKit documentation) if you want Apple Music to work in your build.
+  5. Select the `app` configuration and press **Run**.
 
-- **Useful Gradle commands (from repo root):**
+- **Useful Gradle commands (from repo root)**
   - Assemble debug APK: `./gradlew :app:assembleDebug`
   - Install debug build on a connected device: `./gradlew :app:installDebug`
   - Run unit tests: `./gradlew :app:testDebugUnitTest`
   - Run instrumentation tests: `./gradlew :app:connectedDebugAndroidTest`
   - Run Android Lint: `./gradlew :app:lintDebug`
 
-Apple Music integration will not function correctly unless you provide valid Apple Music credentials and follow Apple’s developer policies.
-
 ## Contributing
 
-Contributions are welcome—as long as they respect the core principles of simplicity, privacy, and focus.
+Contributions are welcome—as long as they respect the core principles of **simplicity**, **privacy**, and **focus**.
 
 If you open a pull request:
 
-- Keep UI changes mindful of E‑ink devices (contrast, motion, density)
-- Avoid adding tracking, ads, or dark patterns
-- Test on at least one real or virtual device on a supported Android version
+- Keep UI changes friendly to E‑ink devices (contrast, motion, density).
+- Avoid adding tracking, ads, or dark patterns.
+- Test on at least one real or virtual device on a supported Android version.
 
 ## License
 
