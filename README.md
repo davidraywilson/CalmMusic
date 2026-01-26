@@ -179,4 +179,4 @@ If you open a pull request:
 
 ## License
 
-License details are not finalized yet. Until a license file is added, please treat this repository as **all rights reserved** by the author and ask before redistributing or publishing modified builds.
+GPL‑3.0 (see `LICENSE`).
