@@ -1051,11 +1051,9 @@ class CalmMusicViewModel(
             onScanProgress,
             onIngestProgress
         )
-        updateLibrary(
-            songs = result.songs,
-            albums = result.albums,
-            artists = result.artists,
-        )
+
+        refreshLibraryFromDatabase()
+
         return result
     }
 

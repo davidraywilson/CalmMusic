@@ -175,12 +175,17 @@ object LocalMusicScanner {
         val existingArtistId = existing?.artistId
         val existingAlbumId = existing?.albumId
 
-        val trackArtistDisplay = (meta.artist?.takeIf { it.isNotBlank() } ?: existingArtist).orEmpty().trim()
+        val explicitAlbumArtist = meta.albumArtist?.trim()?.takeIf { it.isNotBlank() }
+
+        val baseArtistCandidate = meta.artist?.takeIf { it.isNotBlank() }
+            ?: existingArtist
+            ?: explicitAlbumArtist
+
+        val trackArtistDisplay = baseArtistCandidate?.trim().orEmpty()
         val trackArtistIdComponent = trackArtistDisplay.takeIf { it.isNotBlank() }?.normalizeForIdComponent()
 
         val artistId = trackArtistIdComponent?.let { "LOCAL_FILE:$it" } ?: existingArtistId
 
-        val explicitAlbumArtist = meta.albumArtist?.trim()?.takeIf { it.isNotBlank() }
         val effectiveAlbumArtist = explicitAlbumArtist ?: trackArtistDisplay
         val albumArtistIdComponent = effectiveAlbumArtist.takeIf { it.isNotBlank() }?.normalizeForIdComponent()
 
