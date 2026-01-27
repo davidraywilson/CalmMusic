@@ -884,13 +884,13 @@ class CalmMusicViewModel(
     fun startLocalPlaybackMonitoring(controller: MediaController) {
         localPlaybackMonitorJob?.cancel()
         localPlaybackMonitorJob = viewModelScope.launch {
-            var lastLocalQueueIndex: Int? = null
             var lastYouTubeQueueIndex: Int? = null
             val fastIntervalMs = 200L
             val slowIntervalMs = 2000L
 
             while (true) {
                 val state = _playbackState.value
+                val queue = state.playbackQueue
                 val currentSong = state.nowPlayingSong
                 val isLocalFile = currentSong?.sourceType == "LOCAL_FILE" || currentSong?.sourceType == "YOUTUBE_DOWNLOAD"
                 val isYouTube = currentSong?.sourceType == "YOUTUBE"
@@ -915,53 +915,20 @@ class CalmMusicViewModel(
                     isBuffering = isBufferingNow,
                 )
 
-                if (isLocalFile) {
-                    val currentLocalIndex = controller.currentMediaItemIndex
-
-                    if (currentLocalIndex >= 0) {
-                        if (lastLocalQueueIndex == null) {
-                            lastLocalQueueIndex = currentLocalIndex
-                        } else if (currentLocalIndex != lastLocalQueueIndex) {
-                            val delta = currentLocalIndex - lastLocalQueueIndex!!
-                            val queue = state.playbackQueue
-                            val startGlobalIndex = state.playbackQueueIndex ?: 0
-
-                            var targetGlobalIndex = startGlobalIndex
-                            var remaining = kotlin.math.abs(delta)
-                            val direction = if (delta > 0) 1 else -1
-
-                            var i = startGlobalIndex
-                            while (remaining > 0) {
-                                i += direction
-                                if (i !in queue.indices) {
-                                    break
-                                }
-                                val songAtIndex = queue[i]
-                                if (songAtIndex.sourceType == "LOCAL_FILE" ||
-                                    songAtIndex.sourceType == "YOUTUBE_DOWNLOAD"
-                                ) {
-                                    remaining--
-                                }
-                            }
-
-                            if (remaining == 0 && i in queue.indices) {
-                                targetGlobalIndex = i
-                                lastLocalQueueIndex = currentLocalIndex
-
-                                val newLocalSong = queue[targetGlobalIndex]
-                                newState = newState.copy(
-                                    playbackQueueIndex = targetGlobalIndex,
-                                    currentSongId = newLocalSong.id,
-                                    nowPlayingSong = newLocalSong,
-                                    nowPlayingDurationMs = newLocalSong.durationMillis
-                                        ?: newState.nowPlayingDurationMs,
-                                    nowPlayingPositionMs = 0L,
-                                    isPlaybackPlaying = isPlaying,
-                                )
-                            } else {
-                                lastLocalQueueIndex = currentLocalIndex
-                            }
-                        }
+                val currentMediaId = controller.currentMediaItem?.mediaId
+                if (currentMediaId != null && queue.isNotEmpty()) {
+                    val targetIndex = queue.indexOfFirst { it.id == currentMediaId }
+                    if (targetIndex >= 0 && targetIndex != state.playbackQueueIndex) {
+                        val newSong = queue[targetIndex]
+                        newState = newState.copy(
+                            playbackQueueIndex = targetIndex,
+                            currentSongId = newSong.id,
+                            nowPlayingSong = newSong,
+                            nowPlayingDurationMs = newSong.durationMillis
+                                ?: newState.nowPlayingDurationMs,
+                            nowPlayingPositionMs = position,
+                            isPlaybackPlaying = isPlaying,
+                        )
                     }
                 }
 
@@ -971,7 +938,6 @@ class CalmMusicViewModel(
                     if (songId != lastCompletedSongId) {
                         lastCompletedSongId = songId
 
-                        val queue = state.playbackQueue
                         val currentIndex = state.playbackQueueIndex
 
                         if (queue.isNotEmpty() && currentIndex != null && currentIndex in queue.indices) {
@@ -1010,7 +976,6 @@ class CalmMusicViewModel(
                 if (isYouTube) {
                     // Maintain a small prefetch window
                     val currentIndex = state.playbackQueueIndex
-                    val queue = state.playbackQueue
                     if (currentIndex != null && currentIndex in queue.indices && currentIndex != lastYouTubeQueueIndex) {
                         lastYouTubeQueueIndex = currentIndex
                         val windowIds = mutableListOf<String>()
