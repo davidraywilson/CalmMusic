@@ -700,6 +700,34 @@ fun CalmMusic(app: CalmMusic) {
     LaunchedEffect(localMediaController) {
         val controller = localMediaController ?: return@LaunchedEffect
         viewModel.startLocalPlaybackMonitoring(controller)
+
+        PlaybackService.registerErrorCallback { error ->
+            var cause: Throwable? = error
+            var lastCause: Throwable? = null
+            while (cause != null && cause !== lastCause) {
+                lastCause = cause
+                cause = cause.cause
+            }
+            val root = lastCause ?: error
+            val className = root.javaClass.name
+            val message = root.message ?: error.message ?: ""
+
+            val isNewPipeContentNotAvailable =
+                className == "org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException" ||
+                        message.contains("page needs to be reloaded", ignoreCase = true) ||
+                        message.contains("ContentNotAvailable", ignoreCase = true)
+
+            if (isNewPipeContentNotAvailable) {
+                libraryScope.launch {
+                    snackbarHostState.showSnackbar(
+                        message = "YouTube reported this track can't be played. Skipping.",
+                        withDismissAction = false,
+                        duration = SnackbarDurationMMD.Short,
+                    )
+                }
+                viewModel.playNextInQueue(controller)
+            }
+        }
     }
 
     LaunchedEffect(Unit) {

@@ -98,7 +98,7 @@ dependencies {
     implementation("androidx.media3:media3-session:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
 
-    implementation("com.github.teamnewpipe:NewPipeExtractor:v0.24.8")
+    implementation("com.github.teamnewpipe:NewPipeExtractor:v0.25.1")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.4")
 

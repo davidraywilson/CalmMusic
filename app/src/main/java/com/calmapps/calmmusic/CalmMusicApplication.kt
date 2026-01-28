@@ -7,6 +7,10 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
 import com.apple.android.music.playback.controller.MediaPlayerController
 import com.apple.android.music.playback.controller.MediaPlayerControllerFactory
 import com.apple.android.sdk.authentication.AuthenticationFactory
@@ -16,10 +20,6 @@ import com.calmapps.calmmusic.data.NowPlayingStorage
 import com.calmapps.calmmusic.data.PlaybackStateManager
 import com.calmapps.calmmusic.overlay.SystemOverlayService
 import okhttp3.OkHttpClient
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
-import androidx.media3.datasource.cache.SimpleCache
 import java.io.File
 
 @UnstableApi
@@ -119,6 +119,7 @@ class CalmMusic : Application(), DefaultLifecycleObserver {
             app = this,
             appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO),
         )
+
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         appleMusicPlayer.setOnCurrentItemChangedListener { index ->
             if (index != null && index >= 0) {

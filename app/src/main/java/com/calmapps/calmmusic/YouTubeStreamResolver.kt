@@ -13,7 +13,6 @@ import org.schabi.newpipe.extractor.exceptions.ExtractionException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.localization.Localization
 import org.schabi.newpipe.extractor.services.youtube.YoutubeService
-import java.io.IOException
 
 /**
  * Resolves a playable audio URL for a YouTube video (by videoId) using
@@ -26,9 +25,9 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
     }
 
     companion object {
-        const val NEWPIPE_USER_AGENT: String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
-
-        private const val BYPASS_COOKIES: String = "SOCS=CAI; VISITOR_INFO1_LIVE=i7Sm6Qgj0lE; CONSENT=YES+cb.20210328-17-p0.en+FX+475"
+        // Default User-Agent to start with; match NewPipeExtractor's Firefox ESR 140 UA.
+        const val NEWPIPE_USER_AGENT: String =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
         @Volatile
         private var initialized: Boolean = false
@@ -37,8 +36,7 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
             if (!initialized) {
                 synchronized(this) {
                     if (!initialized) {
-                        // Force US/English to match our hardcoded cookies
-                        NewPipe.init(OkHttpDownloader(client), Localization("US", "en"))
+                        NewPipe.init(OkHttpDownloader(client), Localization("en", "US"))
                         initialized = true
                     }
                 }
@@ -62,6 +60,9 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
                 val msg = e.message ?: ""
                 if (msg.contains("reloaded", ignoreCase = true) ||
                     msg.contains("ContentNotAvailable", ignoreCase = true)) {
+                    synchronized(Companion) {
+                        initialized = false
+                    }
                     delay(500L * (attempt + 1))
                 } else {
                     throw e
@@ -97,52 +98,46 @@ class YouTubeStreamResolver(private val client: OkHttpClient = OkHttpClient()) {
             chosen.url ?: error("No URL for chosen audio stream")
         }
 
-    private class OkHttpDownloader(private val client: OkHttpClient) : Downloader() {
-        override fun execute(request: Request): Response {
-            val httpMethod = request.httpMethod()
-            val url = request.url()
-            val headers = request.headers() // These come from NewPipe extractor
-            val dataToSend = request.dataToSend()
+        private class OkHttpDownloader(private val client: OkHttpClient) : Downloader() {
+            override fun execute(request: Request): Response {
+                val httpMethod = request.httpMethod()
+                val url = request.url()
+                val headers = request.headers()
+                val dataToSend = request.dataToSend()
 
-            val requestBody = if (dataToSend != null) RequestBody.create(null, dataToSend) else null
+                val requestBody = dataToSend?.let { RequestBody.create(null, it) }
 
-            val builder = okhttp3.Request.Builder()
-                .method(httpMethod, requestBody)
-                .url(url)
-                .header("User-Agent", NEWPIPE_USER_AGENT)
-                .header("Cookie", BYPASS_COOKIES)
-                .header("Referer", "https://www.youtube.com/")
+                // Start with our default User-Agent, then let extractor-provided headers
+                // (including cookies, referer, or a different User-Agent) override as needed.
+                val builder = okhttp3.Request.Builder()
+                    .method(httpMethod, requestBody)
+                    .url(url)
+                    .header("User-Agent", NEWPIPE_USER_AGENT)
 
-            for ((name, values) in headers) {
-                if (name.equals("User-Agent", ignoreCase = true) ||
-                    name.equals("Cookie", ignoreCase = true) ||
-                    name.equals("Referer", ignoreCase = true)) {
-                    continue
+                for ((name, values) in headers) {
+                    builder.removeHeader(name)
+                    for (value in values) {
+                        builder.addHeader(name, value)
+                    }
                 }
 
-                builder.removeHeader(name)
-                for (value in values) {
-                    builder.addHeader(name, value)
+                val response = client.newCall(builder.build()).execute()
+
+                if (response.code == 429) {
+                    response.close()
+                    throw ReCaptchaException("reCaptcha Challenge requested", url)
                 }
+
+                val body = response.body?.string()
+                val latestUrl = response.request.url.toString()
+
+                return Response(
+                    response.code,
+                    response.message,
+                    response.headers.toMultimap(),
+                    body,
+                    latestUrl,
+                )
             }
-
-            val response = client.newCall(builder.build()).execute()
-
-            if (response.code == 429) {
-                response.close()
-                throw ReCaptchaException("reCaptcha Challenge requested", url)
-            }
-
-            val body = response.body?.string()
-            val latestUrl = response.request.url.toString()
-
-            return Response(
-                response.code,
-                response.message,
-                response.headers.toMultimap(),
-                body,
-                latestUrl,
-            )
         }
-    }
 }

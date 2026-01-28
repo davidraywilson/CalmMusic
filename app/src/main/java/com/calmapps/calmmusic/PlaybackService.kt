@@ -42,6 +42,10 @@ class PlaybackService : MediaSessionService() {
         private const val NEWPIPE_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
         private const val BYPASS_COOKIES = "SOCS=CAI; VISITOR_INFO1_LIVE=i7Sm6Qgj0lE; CONSENT=YES+cb.20210328-17-p0.en+FX+475"
+
+        fun registerErrorCallback(callback: ((PlaybackException) -> Unit)?) {
+            errorCallback = callback
+        }
     }
 
     @OptIn(UnstableApi::class)
