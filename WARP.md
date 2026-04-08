@@ -20,7 +20,7 @@ This is a single-module Android app built with the Gradle Kotlin DSL and the And
 
 - **Install/run on device or emulator**
   - Install the debug build on a connected device/emulator: `./gradlew :app:installDebug`
-  - After install, launch the "CalmMusic" app from the launcher.
+  - After install, launch the "CalmTunes" app from the launcher.
 
 - **Android Lint / static checks**
   - Run Android Lint on the debug variant: `./gradlew :app:lintDebug`
@@ -29,7 +29,7 @@ This is a single-module Android app built with the Gradle Kotlin DSL and the And
   - Run all unit tests for the app module: `./gradlew :app:testDebugUnitTest`
   - Run all connected (instrumentation) tests on a device/emulator: `./gradlew :app:connectedDebugAndroidTest`
   - Run a single unit test (replace the test class and/or method name as needed):
-    - `./gradlew :app:testDebugUnitTest --tests "com.calmapps.calmmusic.YourTestClassName"`
+    - `./gradlew :app:testDebugUnitTest --tests "com.calmapps.calmtunes.YourTestClassName"`
 
 ## High-level architecture
 
@@ -47,7 +47,7 @@ This is a single-module Android app built with the Gradle Kotlin DSL and the And
 
 ### Application and Apple Music wiring
 
-- **`CalmMusic` `Application` class** (`app/src/main/java/com/calmapps/calmmusic/CalmMusicApplication.kt`)
+- **`CalmTunes` `Application` class** (`app/src/main/java/com/calmapps/calmtunes/CalmTunesApplication.kt`)
   - Loads the native `appleMusicSDK` library in a companion object.
   - Creates and exposes (via `lateinit` properties) the core Apple Music integration objects:
     - `SimpleTokenProvider` – implements MusicKit's `TokenProvider` and owns the developer token and music user token.
@@ -56,8 +56,8 @@ This is a single-module Android app built with the Gradle Kotlin DSL and the And
     - `AppleMusicAuthManager` – thin wrapper around `AuthenticationManager` and `SimpleTokenProvider` to build the sign-in intent and handle auth results.
     - `AppleMusicPlayer` – wrapper around `MediaPlayerController` that owns the Apple Music playback queue and exposes simple `playSongById` / `playQueueOfSongs` / `pause` / `resume` APIs.
     - `AppleMusicApiClient` – Retrofit-based Web API client returned from `AppleMusicApiClientImpl.create`.
-    - `CalmMusicSettingsManager` – manages user settings (local music on/off, folders) via SharedPreferences + `StateFlow`s.
-  - The `MainActivity` accesses these singletons by casting `application` to `CalmMusic`.
+    - `CalmTunesSettingsManager` – manages user settings (local music on/off, folders) via SharedPreferences + `StateFlow`s.
+  - The `MainActivity` accesses these singletons by casting `application` to `CalmTunes`.
 
 - **Token and auth helpers** (`AppleMusicCore.kt`)
   - `SimpleTokenProvider` stores the music user token in `SharedPreferences` and keeps the developer token in memory.
@@ -86,9 +86,9 @@ This is a single-module Android app built with the Gradle Kotlin DSL and the And
 
 ### Local database and data model
 
-All audio content (Apple Music + local files) is normalized into a small Room schema in `app/src/main/java/com/calmapps/calmmusic/data/`.
+All audio content (Apple Music + local files) is normalized into a small Room schema in `app/src/main/java/com/calmapps/calmtunes/data/`.
 
-- **Database** (`CalmMusicDatabase.kt`)
+- **Database** (`CalmTunesDatabase.kt`)
   - Room `@Database` containing entities:
     - `SongEntity`
     - `AlbumEntity`
@@ -96,7 +96,7 @@ All audio content (Apple Music + local files) is normalized into a small Room sc
     - `PlaylistEntity`
     - `PlaylistTrackEntity`
   - Exposes DAOs: `SongDao`, `AlbumDao`, `ArtistDao`, `PlaylistDao`.
-  - Uses `Room.databaseBuilder` with DB name `calmmusic.db` and `fallbackToDestructiveMigration()`.
+  - Uses `Room.databaseBuilder` with DB name `calmtunes.db` and `fallbackToDestructiveMigration()`.
 
 - **Core entities and DAOs** (`SongModels.kt`)
   - `SongEntity` – single table for all songs, with:
@@ -113,7 +113,7 @@ All audio content (Apple Music + local files) is normalized into a small Room sc
   - Foreign keys cascade deletes from playlists to `playlist_tracks` but deliberately do **not** cascade from `songs` to `playlist_tracks` so resyncing songs by `sourceType` does not silently remove playlist memberships.
   - `PlaylistDao` provides playlist listing with song counts, playlist CRUD, and a `getSongsForPlaylist` join query ordered by `position`.
 
-- **Settings** (`CalmMusicSettingsManager.kt`)
+- **Settings** (`CalmTunesSettingsManager.kt`)
   - Wraps `SharedPreferences` with `MutableStateFlow`/`StateFlow` to expose:
     - `includeLocalMusic` (Boolean toggle for indexing local files).
     - `localMusicFolders` (set of persisted SAF tree URIs).
@@ -136,14 +136,14 @@ Playback is split between Apple Music (MusicKit) and local files (Media3), with 
   - `MediaSessionService` that owns an `ExoPlayer` instance and a `MediaSession`.
   - Configures `AudioAttributes` for music, manages audio focus, and handles "becoming noisy" (e.g., headphones unplugged).
   - Creates a notification channel and uses `DefaultMediaNotificationProvider` for system media notifications and lockscreen/notification controls.
-  - Exposes the session to clients; `MainActivity`/`CalmMusic` obtain a `MediaController` via `SessionToken` and use it as `localMediaController`.
+  - Exposes the session to clients; `MainActivity`/`CalmTunes` obtain a `MediaController` via `SessionToken` and use it as `localMediaController`.
 
-- **Apple Music playback** (`AppleMusicCore.kt`, `CalmMusicApplication.kt`, `MainActivity.kt`)
+- **Apple Music playback** (`AppleMusicCore.kt`, `CalmTunesApplication.kt`, `MainActivity.kt`)
   - `AppleMusicPlayer` encapsulates queue building via `CatalogPlaybackQueueItemProvider` and forwards current queue index changes to the UI.
   - The Compose layer treats Apple Music songs and local songs uniformly in the playback queue and maps the Apple queue index back into the global queue.
   - Repeat mode for Apple playback is applied via `MediaPlayerController.setRepeatMode` using the app's `RepeatMode` enum.
 
-- **Shared playback queue and state** (`MainActivity.kt` – `CalmMusic` composable)
+- **Shared playback queue and state** (`MainActivity.kt` – `CalmTunes` composable)
   - Maintains a unified `playbackQueue` of `SongUiModel` plus:
     - `playbackQueueIndex` (current index in that queue).
     - `originalPlaybackQueue` for restoring order when shuffle is turned off.
@@ -159,21 +159,21 @@ Playback is split between Apple Music (MusicKit) and local files (Media3), with 
 ### UI and navigation
 
 - **Entry point** (`MainActivity.kt`)
-  - `MainActivity` hosts a single `CalmMusic` composable in `setContent`, wrapped with the Mudita MMD `ThemeMMD`.
+  - `MainActivity` hosts a single `CalmTunes` composable in `setContent`, wrapped with the Mudita MMD `ThemeMMD`.
   - Defines a sealed `Screen` hierarchy (Playlists, Artists, Songs, Albums, Search, Settings, and detail screens) and a bottom navigation bar (`navItems`).
 
-- **`CalmMusic` composable**
+- **`CalmTunes` composable**
   - Owns most app-wide state, tying together:
     - Apple Music auth status and library sync via `AppleMusicApiClient` and Room.
-    - Local library sync via `LocalMusicScanner` + Room, driven by `CalmMusicSettingsManager` flows.
+    - Local library sync via `LocalMusicScanner` + Room, driven by `CalmTunesSettingsManager` flows.
     - Playback queues, now-playing state, shuffle/repeat, and communication with both players.
     - In-memory projections of library content as UI models (`SongUiModel`, `AlbumUiModel`, `ArtistUiModel`, `PlaylistUiModel`).
   - Sets up a `NavHost` with destinations for playlist, artist, songs, albums, search, settings, and detail flows.
   - Routes user actions from the various screen composables back into database operations and playback functions.
 
-- **Screen composables** (`app/src/main/java/com/calmapps/calmmusic/ui/`)
+- **Screen composables** (`app/src/main/java/com/calmapps/calmtunes/ui/`)
   - Individual screens (e.g., `SongsScreen`, `AlbumsScreen`, `ArtistsScreen`, `NowPlayingScreen`, `PlaylistsScreen`, `PlaylistDetailsScreen`, `PlaylistEditScreen`, `PlaylistAddSongsScreen`, `SearchScreen`, `SettingsScreen`) are primarily UI-only.
-  - They receive data as UI models and callbacks for user actions; most side effects and data persistence are handled in `CalmMusic`.
+  - They receive data as UI models and callbacks for user actions; most side effects and data persistence are handled in `CalmTunes`.
   - Shared UI components such as `SongAndPlaylistItems`, `DashedDivider`, and MMD wrappers encapsulate repeated UI patterns.
 
 ## How features cross-cut multiple layers
@@ -193,6 +193,6 @@ When editing or adding features, be aware of the coupling between layers:
   - Keep `position` ordering in `PlaylistTrackEntity` and the `getSongsForPlaylist` query in sync with how you display and reorder playlists.
 
 - **Adjusting Apple Music vs local library sync**
-  - Apple Music library sync logic and error handling live in `CalmMusic` (within `MainActivity.kt`), using `AppleMusicApiClient` and the DAOs.
-  - Local library sync is triggered from `CalmMusic` based on `CalmMusicSettingsManager` flows and implemented via `LocalMusicScanner` and Room.
+  - Apple Music library sync logic and error handling live in `CalmTunes` (within `MainActivity.kt`), using `AppleMusicApiClient` and the DAOs.
+  - Local library sync is triggered from `CalmTunes` based on `CalmTunesSettingsManager` flows and implemented via `LocalMusicScanner` and Room.
   - Deletion and upsert logic is organized by `sourceType`; changing this requires updating both the sync code and Room queries.

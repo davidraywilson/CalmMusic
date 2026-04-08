@@ -1,15 +1,15 @@
-<img align="left" src="logo.svg" width="100" height="100" alt="CalmMusic Logo">
+<img align="left" src="logo.svg" width="100" height="100" alt="CalmTunes Logo">
 <a href="https://www.buymeacoffee.com/davidraywilson" target="_blank">
   <img align="right" src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174">
 </a>
 
 <br clear="all" />
 
-# CalmMusic
+# CalmTunes
 
 A calm, E‑ink‑friendly music player that puts your attention and privacy first.
 
-CalmMusic brings together your **local files**, **YouTube Music** search/streaming, and **optional Apple Music** support into one quiet, distraction‑free place to listen.
+CalmTunes brings together your **local files**, **YouTube Music** search/streaming, and **optional Apple Music** support into one quiet, distraction‑free place to listen.
 
 "Let's make technology useful again."
 
@@ -17,38 +17,38 @@ CalmMusic brings together your **local files**, **YouTube Music** search/streami
 
 <table>
 <tr>
-  <td><img src="CalmMusic Screens/screen_1.png" alt="CalmMusic screenshot 1"></td>
-  <td><img src="CalmMusic Screens/screen_2.png" alt="CalmMusic screenshot 2"></td>
-  <td><img src="CalmMusic Screens/screen_3.png" alt="CalmMusic screenshot 3"></td>
-  <td><img src="CalmMusic Screens/screen_4.png" alt="CalmMusic screenshot 4"></td>
+  <td><img src="CalmTunes Screens/screen_1.png" alt="CalmTunes screenshot 1"></td>
+  <td><img src="CalmTunes Screens/screen_2.png" alt="CalmTunes screenshot 2"></td>
+  <td><img src="CalmTunes Screens/screen_3.png" alt="CalmTunes screenshot 3"></td>
+  <td><img src="CalmTunes Screens/screen_4.png" alt="CalmTunes screenshot 4"></td>
 </tr>
 <tr>
-  <td><img src="CalmMusic Screens/screen_5.png" alt="CalmMusic screenshot 5"></td>
-  <td><img src="CalmMusic Screens/screen_6.png" alt="CalmMusic screenshot 6"></td>
-  <td><img src="CalmMusic Screens/screen_7.png" alt="CalmMusic screenshot 7"></td>
-  <td><img src="CalmMusic Screens/screen_8.png" alt="CalmMusic screenshot 8"></td>
+  <td><img src="CalmTunes Screens/screen_5.png" alt="CalmTunes screenshot 5"></td>
+  <td><img src="CalmTunes Screens/screen_6.png" alt="CalmTunes screenshot 6"></td>
+  <td><img src="CalmTunes Screens/screen_7.png" alt="CalmTunes screenshot 7"></td>
+  <td><img src="CalmTunes Screens/screen_8.png" alt="CalmTunes screenshot 8"></td>
 </tr>
 <tr>
-  <td><img src="CalmMusic Screens/screen_9.png" alt="CalmMusic screenshot 9"></td>
-  <td><img src="CalmMusic Screens/screen_10.png" alt="CalmMusic screenshot 10"></td>
-  <td><img src="CalmMusic Screens/screen_11.png" alt="CalmMusic screenshot 11"></td>
-  <td><img src="CalmMusic Screens/screen_12.png" alt="CalmMusic screenshot 12"></td>
+  <td><img src="CalmTunes Screens/screen_9.png" alt="CalmTunes screenshot 9"></td>
+  <td><img src="CalmTunes Screens/screen_10.png" alt="CalmTunes screenshot 10"></td>
+  <td><img src="CalmTunes Screens/screen_11.png" alt="CalmTunes screenshot 11"></td>
+  <td><img src="CalmTunes Screens/screen_12.png" alt="CalmTunes screenshot 12"></td>
 </tr>
 <tr>
-  <td><img src="CalmMusic Screens/screen_13.png" alt="CalmMusic screenshot 13"></td>
-  <td><img src="CalmMusic Screens/screen_14.png" alt="CalmMusic screenshot 14"></td>
-  <td><img src="CalmMusic Screens/screen_15.png" alt="CalmMusic screenshot 15"></td>
-  <td><img src="CalmMusic Screens/screen_16.png" alt="CalmMusic screenshot 16"></td>
+  <td><img src="CalmTunes Screens/screen_13.png" alt="CalmTunes screenshot 13"></td>
+  <td><img src="CalmTunes Screens/screen_14.png" alt="CalmTunes screenshot 14"></td>
+  <td><img src="CalmTunes Screens/screen_15.png" alt="CalmTunes screenshot 15"></td>
+  <td><img src="CalmTunes Screens/screen_16.png" alt="CalmTunes screenshot 16"></td>
 </tr>
 <tr>
-  <td><img src="CalmMusic Screens/screen_17.png" alt="CalmMusic screenshot 17"></td>
-  <td><img src="CalmMusic Screens/screen_18.png" alt="CalmMusic screenshot 18"></td>
+  <td><img src="CalmTunes Screens/screen_17.png" alt="CalmTunes screenshot 17"></td>
+  <td><img src="CalmTunes Screens/screen_18.png" alt="CalmTunes screenshot 18"></td>
 </tr>
 </table>
 
-## What makes CalmMusic different?
+## What makes CalmTunes different?
 
-CalmMusic is for people who want **less noise and more music**—especially on de‑googled phones and E‑ink devices.
+CalmTunes is for people who want **less noise and more music**—especially on de‑googled phones and E‑ink devices.
 
 - **Built for E‑ink and low‑distraction screens**  
   Large text, high contrast, minimal animations, and layouts that still feel good at slow refresh rates.
@@ -59,11 +59,11 @@ CalmMusic is for people who want **less noise and more music**—especially on d
 - **You stay in control**  
   You choose which folders to scan, which streaming source to use, and what ends up in your library.
 
-## What you can do with CalmMusic
+## What you can do with CalmTunes
 
 ### 1. Listen to your local music
 
-- Choose exactly which folders on your device CalmMusic is allowed to scan.
+- Choose exactly which folders on your device CalmTunes is allowed to scan.
 - The app indexes supported audio files and builds a clean library of **songs, albums, artists, and playlists**.
 - Local songs work fully **offline**—perfect for slow or no‑signal moments.
 
@@ -71,9 +71,9 @@ CalmMusic is for people who want **less noise and more music**—especially on d
 
 When you pick **YouTube Music** as your streaming source:
 
-- Search YouTube Music for songs and albums from inside CalmMusic.
+- Search YouTube Music for songs and albums from inside CalmTunes.
 - Add YouTube tracks to the same queue as your local music.
-- Optionally let CalmMusic **fill in missing tracks on local albums** using YouTube search results.
+- Optionally let CalmTunes **fill in missing tracks on local albums** using YouTube search results.
 - See and manage active and recent **YouTube downloads** in a dedicated Downloads screen.
 
 > Please respect artists’ rights and your local laws when streaming or downloading from YouTube.
@@ -104,12 +104,12 @@ Regardless of where your music comes from:
 
 ## Getting started
 
-1. **Install CalmMusic** on an Android device (Android 9 / API 28 or newer is recommended).  
+1. **Install CalmTunes** on an Android device (Android 9 / API 28 or newer is recommended).  
 2. **Open the app** – you’ll start with an empty library.
 3. **Add local music**
    - Go to **Settings → Local music**.
    - Pick the folders that contain your audio files.
-   - CalmMusic will scan and build your library of songs, albums, and artists.
+   - CalmTunes will scan and build your library of songs, albums, and artists.
 4. **Pick a streaming source (optional)**
    - Go to **Settings → Streaming source**.
    - Choose **YouTube Music** to enable YouTube search and streaming.
@@ -119,7 +119,7 @@ You can change these choices at any time.
 
 ## Privacy & data
 
-CalmMusic is designed to stay out of your business:
+CalmTunes is designed to stay out of your business:
 
 - **No accounts required** for local music or YouTube search.
 - **No ads, no analytics, no tracking SDKs.**
@@ -132,7 +132,7 @@ You can always remove folders, clear local data, or turn streaming features off 
 
 ## For developers
 
-If you want to hack on CalmMusic or build your own APK:
+If you want to hack on CalmTunes or build your own APK:
 
 - **Requirements**
   - Android Studio (Giraffe / Hedgehog or newer)

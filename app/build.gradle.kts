@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.calmapps.calmmusic"
+    namespace = "com.calmapps.calmtunes"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.calmapps.calmmusic"
+        applicationId = "com.calmapps.calmtunes"
         minSdk = 28
         targetSdk = 35
         versionCode = 11
