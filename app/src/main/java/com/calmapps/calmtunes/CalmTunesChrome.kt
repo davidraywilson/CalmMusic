@@ -76,10 +76,13 @@ fun CalmTunesTopAppBar(
     val navRoutes = remember { navItems.map { it.route } }
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    val isOnPlaylistDetails = currentDestination?.route == Screen.PlaylistDetails.route ||
+        currentDestination?.route?.startsWith("${Screen.PlaylistDetails.route}/") == true
+
     TopAppBarMMD(
         navigationIcon = {
             when {
-                currentDestination?.route == Screen.PlaylistDetails.route && isPlaylistDetailsEditMode -> {
+                isOnPlaylistDetails && isPlaylistDetailsEditMode -> {
                     IconButton(onClick = onCancelPlaylistDetailsEditClick) {
                         Icon(
                             imageVector = Icons.Outlined.Clear,
@@ -182,7 +185,7 @@ fun CalmTunesTopAppBar(
                     )
                 }
 
-                currentDestination?.route == Screen.PlaylistDetails.route && selectedPlaylist != null -> {
+                isOnPlaylistDetails && selectedPlaylist != null -> {
                     Text(
                         text = selectedPlaylist.name,
                         fontSize = 20.sp,
@@ -205,6 +208,7 @@ fun CalmTunesTopAppBar(
         actions = {
             CalmTunesTopAppBarActions(
                 currentDestination = currentDestination,
+                isOnPlaylistDetails = isOnPlaylistDetails,
                 isPlaylistsEditMode = isPlaylistsEditMode,
                 playlistEditSelectionCount = playlistEditSelectionCount,
                 playlistDetailsSelectionCount = playlistDetailsSelectionCount,
@@ -233,6 +237,7 @@ fun CalmTunesTopAppBar(
 @Composable
 private fun CalmTunesTopAppBarActions(
     currentDestination: NavDestination?,
+    isOnPlaylistDetails: Boolean,
     isPlaylistsEditMode: Boolean,
     playlistEditSelectionCount: Int,
     playlistDetailsSelectionCount: Int,
@@ -272,7 +277,7 @@ private fun CalmTunesTopAppBarActions(
         }
     }
 
-    if (currentDestination?.route == Screen.PlaylistDetails.route && !isPlaylistDetailsEditMode) {
+    if (isOnPlaylistDetails && !isPlaylistDetailsEditMode) {
         androidx.compose.foundation.layout.Box {
             IconButton(onClick = onPlaylistDetailsMenuToggle) {
                 Icon(
@@ -333,6 +338,25 @@ private fun CalmTunesTopAppBarActions(
         }
     }
 
+    if (
+        isOnPlaylistDetails &&
+        isPlaylistDetailsEditMode &&
+        playlistDetailsSelectionCount > 0
+    ) {
+        OutlinedButtonMMD(
+            contentPadding = PaddingValues(8.dp),
+            modifier = Modifier.padding(horizontal = 8.dp),
+            onClick = onShowDeletePlaylistSongsConfirmationClick,
+        ) {
+            TextMMD(
+                text = "Remove $playlistDetailsSelectionCount",
+                textAlign = TextAlign.Center,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
+
     if (currentDestination?.route == Screen.PlaylistAddSongs.route) {
         ButtonMMD(
             contentPadding = PaddingValues(8.dp),
@@ -354,7 +378,7 @@ private fun CalmTunesTopAppBarActions(
         currentDestination?.route != Screen.Radio.route &&
         currentDestination?.route != Screen.Search.route &&
         !(currentDestination?.route == Screen.Playlists.route && isPlaylistsEditMode) &&
-        !(currentDestination?.route == Screen.PlaylistDetails.route && isPlaylistDetailsEditMode)
+        !(isOnPlaylistDetails && isPlaylistDetailsEditMode)
     ) {
         ButtonMMD(
             onClick = onNowPlayingClick,

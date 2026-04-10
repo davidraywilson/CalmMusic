@@ -41,6 +41,9 @@ fun ArtistDetailsScreen(
     onPlaySongClick: (SongUiModel, List<SongUiModel>) -> Unit,
     onAlbumClick: (AlbumUiModel) -> Unit,
     onShuffleSongsClick: (List<SongUiModel>) -> Unit,
+    onAddToPlaylistClick: (SongUiModel) -> Unit,
+    onRemoveFromLibraryClick: (SongUiModel) -> Unit,
+    onDeleteClick: (SongUiModel) -> Unit,
 ) {
     var songs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
     var albums by remember { mutableStateOf<List<AlbumUiModel>>(emptyList()) }
@@ -137,7 +140,11 @@ fun ArtistDetailsScreen(
                                         song = song,
                                         isCurrentlyPlaying = song.id == currentSongId,
                                         onClick = { onPlaySongClick(song, songs) },
+                                        onAddToPlaylist = { onAddToPlaylistClick(song) },
+                                        onRemoveFromLibrary = { onRemoveFromLibraryClick(song) },
+                                        onDelete = { onDeleteClick(song) },
                                         showDivider = song != songs.lastOrNull(),
+                                        isInLibrary = true,
                                     )
                                 }
                             } else {

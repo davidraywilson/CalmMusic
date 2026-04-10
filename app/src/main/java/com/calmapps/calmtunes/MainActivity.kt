@@ -13,6 +13,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -559,6 +561,15 @@ fun CalmTunes(app: CalmTunes) {
 
     fun addSongToPlaylist(song: SongUiModel, playlist: PlaylistUiModel) {
         playlistScope.launch {
+            // Ensure the song exists in the database before creating
+            // the playlist track reference. Streaming YouTube songs
+            // played from search are not automatically persisted.
+            if (song.sourceType == SourceType.YOUTUBE && !librarySongIds.contains(song.id)) {
+                try {
+                    viewModel.addStreamingSongToLibrary(song)
+                } catch (_: Exception) { /* best-effort */ }
+            }
+
             var snackbarMessage: String?
             try {
                 val result = playlistsViewModel.addSongToPlaylist(song, playlist)
@@ -938,6 +949,17 @@ fun CalmTunes(app: CalmTunes) {
                             val songToAdd = pendingAddToNewPlaylistSong
                             val editingPlaylist = editing
 
+                            // Persist the streaming song to the library
+                            // before creating the playlist track reference.
+                            if (songToAdd != null &&
+                                songToAdd.sourceType == SourceType.YOUTUBE &&
+                                !librarySongIds.contains(songToAdd.id)
+                            ) {
+                                try {
+                                    viewModel.addStreamingSongToLibrary(songToAdd)
+                                } catch (_: Exception) { /* best-effort */ }
+                            }
+
                             val result = playlistsViewModel.createOrUpdatePlaylist(
                                 params = PlaylistsViewModel.EditPlaylistParams(
                                     playlistId = editingPlaylist?.id,
@@ -1135,6 +1157,10 @@ fun CalmTunes(app: CalmTunes) {
                 navController = navController,
                 startDestination = Screen.Songs.route,
                 modifier = Modifier.padding(paddingValues),
+                enterTransition = { EnterTransition.None },
+                exitTransition = { ExitTransition.None },
+                popEnterTransition = { EnterTransition.None },
+                popExitTransition = { ExitTransition.None },
             ) {
                 playlistsNavGraph()
 
@@ -1207,6 +1233,9 @@ fun CalmTunes(app: CalmTunes) {
                         localSongs = searchLocalSongs,
                         selectedTab = searchSelectedTab,
                         onSelectedTabChange = { searchSelectedTab = it },
+                        onAddToPlaylistClick = onAddToPlaylist,
+                        onRemoveFromLibraryClick = onRemoveFromLibrary,
+                        onDeleteClick = onDelete,
                         onPlaySongClick = { song: SongUiModel ->
                             if (song.sourceType == SourceType.LOCAL_FILE) {
                                 val index = searchLocalSongs.indexOfFirst { it.id == song.id }
@@ -1254,6 +1283,9 @@ fun CalmTunes(app: CalmTunes) {
                         onShuffleClick = { songs ->
                             startShuffledPlaybackFromQueue(songs)
                         },
+                        onAddToPlaylistClick = onAddToPlaylist,
+                        onRemoveFromLibraryClick = onRemoveFromLibrary,
+                        onDeleteClick = onDelete,
                         librarySongIds = librarySongIds,
                     )
                 }
@@ -1273,6 +1305,9 @@ fun CalmTunes(app: CalmTunes) {
                         onShuffleSongsClick = { songs ->
                             startShuffledPlaybackFromQueue(songs)
                         },
+                        onAddToPlaylistClick = onAddToPlaylist,
+                        onRemoveFromLibraryClick = onRemoveFromLibrary,
+                        onDeleteClick = onDelete,
                     )
                 }
 
@@ -1828,8 +1863,10 @@ fun CalmTunes(app: CalmTunes) {
 
                                         val deletedIds = idsToDelete
                                         val currentDetailsPlaylist = selectedPlaylist
+                                        val isOnPlaylistDetails = currentDestination?.route == Screen.PlaylistDetails.route ||
+                                            currentDestination?.route?.startsWith("${Screen.PlaylistDetails.route}/") == true
                                         if (
-                                            currentDestination?.route == Screen.PlaylistDetails.route &&
+                                            isOnPlaylistDetails &&
                                             currentDetailsPlaylist != null &&
                                             deletedIds.contains(currentDetailsPlaylist.id)
                                         ) {

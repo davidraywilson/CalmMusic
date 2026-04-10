@@ -66,8 +66,9 @@ fun PlaylistDetailsScreen(
     val playbackState by playbackViewModel.playbackState.collectAsState()
     val currentSongId = playbackState.currentSongId
     val selectedState = remember { mutableStateMapOf<String, Boolean>() }
+    val songsRevision by playlistsViewModel.playlistSongsRevision.collectAsState()
 
-    LaunchedEffect(playlistId) {
+    LaunchedEffect(playlistId, songsRevision) {
         if (playlistId == null) {
             isLoading = false
             return@LaunchedEffect

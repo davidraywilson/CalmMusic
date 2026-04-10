@@ -8,7 +8,6 @@ import com.calmapps.calmtunes.ui.SongUiModel
  * the existing logic from CalmTunes.
  */
 class PlaylistManager(
-    private val songDao: SongDao,
     private val playlistDao: PlaylistDao,
 ) {
 
@@ -19,31 +18,15 @@ class PlaylistManager(
     )
 
     /**
-     * Add the given song to the specified playlist, creating the SongEntity and
-     * PlaylistTrackEntity entries as needed. Returns information about whether
-     * the song was newly added or already present, along with the updated
-     * playlist song count if available.
+     * Add the given song to the specified playlist by creating a
+     * PlaylistTrackEntity join row. The song must already exist in the songs
+     * table. Returns information about whether the song was newly added or
+     * already present, along with the updated playlist song count.
      */
     suspend fun addSongToPlaylist(
         song: SongUiModel,
         playlistId: String,
     ): AddSongResult {
-        val entity = SongEntity(
-            id = song.id,
-            title = song.title,
-            artist = song.artist,
-            album = null,
-            albumId = null,
-            discNumber = null,
-            trackNumber = song.trackNumber,
-            durationMillis = song.durationMillis,
-            sourceType = song.sourceType,
-            audioUri = song.audioUri ?: song.id,
-            artistId = null,
-            releaseYear = null,
-        )
-        songDao.upsertAll(listOf(entity))
-
         val existing = playlistDao.getSongsForPlaylist(playlistId)
         val existsAlready = existing.any { it.id == song.id }
         return if (existsAlready) {

@@ -32,6 +32,9 @@ fun SearchScreen(
     onSelectedTabChange: (Int) -> Unit,
     onPlaySongClick: (SongUiModel) -> Unit,
     onAlbumClick: (AlbumUiModel) -> Unit,
+    onAddToPlaylistClick: (SongUiModel) -> Unit,
+    onRemoveFromLibraryClick: (SongUiModel) -> Unit,
+    onDeleteClick: (SongUiModel) -> Unit,
     librarySongIds: Set<String> = emptySet(),
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
@@ -106,6 +109,9 @@ fun SearchScreen(
                                         song = song,
                                         isCurrentlyPlaying = false,
                                         onClick = { onPlaySongClick(song) },
+                                        onAddToPlaylist = { onAddToPlaylistClick(song) },
+                                        onRemoveFromLibrary = { onRemoveFromLibraryClick(song) },
+                                        onDelete = { onDeleteClick(song) },
                                         showDivider = song != songs.lastOrNull(),
                                         isInLibrary = librarySongIds.contains(song.id),
                                     )
@@ -154,6 +160,9 @@ fun SearchScreen(
                                         song = song,
                                         isCurrentlyPlaying = false,
                                         onClick = { onPlaySongClick(song) },
+                                        onAddToPlaylist = { onAddToPlaylistClick(song) },
+                                        onRemoveFromLibrary = { onRemoveFromLibraryClick(song) },
+                                        onDelete = { onDeleteClick(song) },
                                         showDivider = song != localSongs.lastOrNull(),
                                         isInLibrary = true,
                                     )

@@ -399,6 +399,13 @@ internal suspend fun performYouTubeDownloadInternal(
                 if (localSongEntity.id != videoId) {
                     songDao.deleteByIds(listOf(videoId))
                 }
+
+                // The old YOUTUBE song is now replaced by a
+                // YOUTUBE_DOWNLOAD song with a different ID prefix.
+                // Clean up any artist/album entities that no longer
+                // have associated songs.
+                albumDao.deleteOrphanedAlbums()
+                artistDao.deleteOrphanedArtists()
             } catch (e: Exception) {
                 e.printStackTrace()
             }

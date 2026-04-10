@@ -36,6 +36,9 @@ fun AlbumDetailsScreen(
     viewModel: CalmTunesViewModel,
     onPlaySongClick: (SongUiModel, List<SongUiModel>) -> Unit,
     onShuffleClick: (List<SongUiModel>) -> Unit,
+    onAddToPlaylistClick: (SongUiModel) -> Unit,
+    onRemoveFromLibraryClick: (SongUiModel) -> Unit,
+    onDeleteClick: (SongUiModel) -> Unit,
     librarySongIds: Set<String> = emptySet(),
 ) {
     var songs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
@@ -130,12 +133,15 @@ fun AlbumDetailsScreen(
                     LazyColumnMMD(contentPadding = PaddingValues(16.dp)) {
                         items(displaySongs.size) { index ->
                             val song = displaySongs[index]
-                            SongItem(
+                        SongItem(
                                 song = song,
                                 isCurrentlyPlaying = song.id == currentSongId,
                                 onClick = {
                                     onPlaySongClick(song, songs)
                                 },
+                                onAddToPlaylist = { onAddToPlaylistClick(song) },
+                                onRemoveFromLibrary = { onRemoveFromLibraryClick(song) },
+                                onDelete = { onDeleteClick(song) },
                                 showDivider = song != displaySongs.lastOrNull(),
                                 showTrackNumber = true,
                                 isInLibrary = librarySongIds.contains(song.id),
