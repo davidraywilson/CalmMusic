@@ -35,6 +35,8 @@ fun SearchScreen(
     onAddToPlaylistClick: (SongUiModel) -> Unit,
     onRemoveFromLibraryClick: (SongUiModel) -> Unit,
     onDeleteClick: (SongUiModel) -> Unit,
+    onAddToLibraryClick: (SongUiModel) -> Unit,
+    onDownloadClick: (SongUiModel) -> Unit,
     librarySongIds: Set<String> = emptySet(),
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
@@ -112,8 +114,11 @@ fun SearchScreen(
                                         onAddToPlaylist = { onAddToPlaylistClick(song) },
                                         onRemoveFromLibrary = { onRemoveFromLibraryClick(song) },
                                         onDelete = { onDeleteClick(song) },
+                                        onAddToLibrary = { onAddToLibraryClick(song) },
+                                        onDownload = { onDownloadClick(song) },
                                         showDivider = song != songs.lastOrNull(),
                                         isInLibrary = librarySongIds.contains(song.id),
+                                        canDownload = song.sourceType == com.calmapps.calmtunes.data.SourceType.YOUTUBE,
                                     )
                                 }
                             }
@@ -163,8 +168,11 @@ fun SearchScreen(
                                         onAddToPlaylist = { onAddToPlaylistClick(song) },
                                         onRemoveFromLibrary = { onRemoveFromLibraryClick(song) },
                                         onDelete = { onDeleteClick(song) },
+                                        onAddToLibrary = { onAddToLibraryClick(song) },
+                                        onDownload = { onDownloadClick(song) },
                                         showDivider = song != localSongs.lastOrNull(),
                                         isInLibrary = true,
+                                        canDownload = song.sourceType == com.calmapps.calmtunes.data.SourceType.YOUTUBE,
                                     )
                                 }
                             }

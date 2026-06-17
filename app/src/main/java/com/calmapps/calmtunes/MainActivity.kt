@@ -628,6 +628,47 @@ fun CalmTunes(app: CalmTunes) {
         }
     }
 
+    val onAddToLibrary: (SongUiModel) -> Unit = { song ->
+        libraryScope.launch {
+            try {
+                viewModel.addStreamingSongToLibrary(song)
+                snackbarHostState.showSnackbar(
+                    message = "Added to library",
+                    withDismissAction = false,
+                    duration = SnackbarDurationMMD.Short,
+                )
+            } catch (_: Exception) {
+                snackbarHostState.showSnackbar(
+                    message = "Couldn't add to library",
+                    withDismissAction = false,
+                    duration = SnackbarDurationMMD.Short,
+                )
+            }
+        }
+    }
+
+    val onDownload: (SongUiModel) -> Unit = { song ->
+        var albumArtist: String? = null
+        if (song.album != null) {
+            val libraryMatch = libraryAlbums.find {
+                it.title.equals(song.album, ignoreCase = true)
+            }
+            if (libraryMatch != null) {
+                albumArtist = libraryMatch.artist
+            } else if (selectedAlbum?.title.equals(song.album, ignoreCase = true)) {
+                albumArtist = selectedAlbum?.artist
+            }
+        }
+        app.youTubeDownloadManager.enqueueDownload(song, albumArtist)
+        libraryScope.launch {
+            snackbarHostState.showSnackbar(
+                message = "Download started",
+                withDismissAction = false,
+                duration = SnackbarDurationMMD.Short,
+            )
+        }
+    }
+
     val onDelete: (SongUiModel) -> Unit = { song ->
         libraryScope.launch {
             when (song.sourceType) {
@@ -910,6 +951,8 @@ fun CalmTunes(app: CalmTunes) {
                 onAddToPlaylistClick = onAddToPlaylist,
                 onRemoveFromLibraryClick = onRemoveFromLibrary,
                 onDeleteClick = onDelete,
+                onAddToLibraryClick = onAddToLibrary,
+                onDownloadClick = onDownload,
             )
         }
         composable(Screen.PlaylistAddSongs.route) {
@@ -1201,6 +1244,8 @@ fun CalmTunes(app: CalmTunes) {
                         onAddToPlaylistClick = onAddToPlaylist,
                         onRemoveFromLibraryClick = onRemoveFromLibrary,
                         onDeleteClick = onDelete,
+                        onAddToLibraryClick = onAddToLibrary,
+                        onDownloadClick = onDownload,
                         onOpenStreamingSettingsClick = openStreamingSettings,
                         onOpenLocalSettingsClick = openLocalSettings,
                     )
@@ -1236,6 +1281,8 @@ fun CalmTunes(app: CalmTunes) {
                         onAddToPlaylistClick = onAddToPlaylist,
                         onRemoveFromLibraryClick = onRemoveFromLibrary,
                         onDeleteClick = onDelete,
+                        onAddToLibraryClick = onAddToLibrary,
+                        onDownloadClick = onDownload,
                         onPlaySongClick = { song: SongUiModel ->
                             if (song.sourceType == SourceType.LOCAL_FILE) {
                                 val index = searchLocalSongs.indexOfFirst { it.id == song.id }
@@ -1286,6 +1333,8 @@ fun CalmTunes(app: CalmTunes) {
                         onAddToPlaylistClick = onAddToPlaylist,
                         onRemoveFromLibraryClick = onRemoveFromLibrary,
                         onDeleteClick = onDelete,
+                        onAddToLibraryClick = onAddToLibrary,
+                        onDownloadClick = onDownload,
                         librarySongIds = librarySongIds,
                     )
                 }
@@ -1308,6 +1357,8 @@ fun CalmTunes(app: CalmTunes) {
                         onAddToPlaylistClick = onAddToPlaylist,
                         onRemoveFromLibraryClick = onRemoveFromLibrary,
                         onDeleteClick = onDelete,
+                        onAddToLibraryClick = onAddToLibrary,
+                        onDownloadClick = onDownload,
                     )
                 }
 

@@ -56,6 +56,8 @@ fun PlaylistDetailsScreen(
     onAddToPlaylistClick: (SongUiModel) -> Unit,
     onRemoveFromLibraryClick: (SongUiModel) -> Unit,
     onDeleteClick: (SongUiModel) -> Unit,
+    onAddToLibraryClick: (SongUiModel) -> Unit,
+    onDownloadClick: (SongUiModel) -> Unit,
 ) {
     // Local State
     var songs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
@@ -190,7 +192,10 @@ fun PlaylistDetailsScreen(
                                 onAddToPlaylist = { onAddToPlaylistClick(song) },
                                 onRemoveFromLibrary = { onRemoveFromLibraryClick(song) },
                                 onDelete = { onDeleteClick(song) },
+                                onAddToLibrary = { onAddToLibraryClick(song) },
+                                onDownload = { onDownloadClick(song) },
                                 isInLibrary = true,
+                                canDownload = song.sourceType == com.calmapps.calmtunes.data.SourceType.YOUTUBE,
                                 showDivider = !isLast,
                             )
                         }

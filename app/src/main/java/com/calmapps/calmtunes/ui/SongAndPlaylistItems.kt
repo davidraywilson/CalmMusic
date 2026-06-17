@@ -49,9 +49,12 @@ fun SongItem(
     onAddToPlaylist: () -> Unit = {},
     onDelete: () -> Unit = {},
     onRemoveFromLibrary: () -> Unit = {},
+    onAddToLibrary: () -> Unit = {},
+    onDownload: () -> Unit = {},
     isDownloaded: Boolean = false,
     showDivider: Boolean = true,
     isInLibrary: Boolean = false,
+    canDownload: Boolean = false,
 ) {
     val (isLocal, subtitle) = remember(
         song.id,
@@ -206,13 +209,13 @@ fun SongItem(
                             }
                         )
 
-                        if (isDownloaded || isLocal) {
+                        if (!isLocal && !isInLibrary) {
                             DashedDivider(thickness = 1.dp)
                             DropdownMenuItemMMD(
-                                text = { TextMMD(text = "Delete") },
+                                text = { TextMMD(text = "Add to library") },
                                 onClick = {
                                     showMenu = false
-                                    onDelete()
+                                    onAddToLibrary()
                                 }
                             )
                         }
@@ -224,6 +227,28 @@ fun SongItem(
                                 onClick = {
                                     showMenu = false
                                     onRemoveFromLibrary()
+                                }
+                            )
+                        }
+
+                        if (canDownload) {
+                            DashedDivider(thickness = 1.dp)
+                            DropdownMenuItemMMD(
+                                text = { TextMMD(text = "Download") },
+                                onClick = {
+                                    showMenu = false
+                                    onDownload()
+                                }
+                            )
+                        }
+
+                        if (isDownloaded || isLocal) {
+                            DashedDivider(thickness = 1.dp)
+                            DropdownMenuItemMMD(
+                                text = { TextMMD(text = "Delete") },
+                                onClick = {
+                                    showMenu = false
+                                    onDelete()
                                 }
                             )
                         }

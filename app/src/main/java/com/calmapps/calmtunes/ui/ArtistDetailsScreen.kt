@@ -44,6 +44,8 @@ fun ArtistDetailsScreen(
     onAddToPlaylistClick: (SongUiModel) -> Unit,
     onRemoveFromLibraryClick: (SongUiModel) -> Unit,
     onDeleteClick: (SongUiModel) -> Unit,
+    onAddToLibraryClick: (SongUiModel) -> Unit,
+    onDownloadClick: (SongUiModel) -> Unit,
 ) {
     var songs by remember { mutableStateOf<List<SongUiModel>>(emptyList()) }
     var albums by remember { mutableStateOf<List<AlbumUiModel>>(emptyList()) }
@@ -143,8 +145,11 @@ fun ArtistDetailsScreen(
                                         onAddToPlaylist = { onAddToPlaylistClick(song) },
                                         onRemoveFromLibrary = { onRemoveFromLibraryClick(song) },
                                         onDelete = { onDeleteClick(song) },
+                                        onAddToLibrary = { onAddToLibraryClick(song) },
+                                        onDownload = { onDownloadClick(song) },
                                         showDivider = song != songs.lastOrNull(),
                                         isInLibrary = true,
+                                        canDownload = song.sourceType == com.calmapps.calmtunes.data.SourceType.YOUTUBE,
                                     )
                                 }
                             } else {
